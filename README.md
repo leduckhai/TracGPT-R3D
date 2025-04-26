@@ -1,3 +1,3 @@
-Appendix for ICDM 2024 submission!
+TracGPT-R3D paper
 
-We make sure everything is anonymized to not violate tripple blind review
+https://docs.google.com/presentation/d/1j0BLJ-a-lKumwKhtrassdHKMW0xMYAxBA0lYcprXA2I/edit?usp=sharing
