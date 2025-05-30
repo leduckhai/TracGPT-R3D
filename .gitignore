@@ -5,3 +5,4 @@ image_slices
 __pycache__
 AI in Dementia Diagnosis Project - Notation.csv
 .venv
+test_gt_50.nii.gz

@@ -12,11 +12,9 @@ import json
 
 ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v3")
 output_folder="./clean_data"
-image_folder_root="./images_v1"
 
 if os.path.exists(output_folder):
     shutil.rmtree(output_folder)
-os.makedirs(image_folder_root, exist_ok=True)
 
 for key in ds.keys():
     print("key", key)

@@ -1,0 +1,11 @@
+torch==2.2.0           # PyTorch for deep learning
+pandas==2.2.1          # Data manipulation
+scikit-learn==1.4.2    # Machine learning algorithms
+numpy==1.26.4          # Numerical operations
+matplotlib==3.8.4      # Plotting
+torchvision
+
+tqdm==4.66.2 
+datasets 
+nibabel
+transformers

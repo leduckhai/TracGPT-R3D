@@ -1,0 +1,20 @@
+{
+    "GCA": {
+        "0": "No cortical atrophy",
+        "1": "mild atrophy: opening of sulci; Koedam = 1 Mild parietal cortical atrophy",
+        "2": "Moderate atrophy: volume loss of gyri; Koedam = 2",
+        "3": "severe end-stage atrophy: \"knife blade\", Substantial widening of sulci"
+    },
+    "Koedam": {
+        "0": "No posterior atrophy, no posterior cingulate and parieto-occipital sulci",
+        "1": "mild widening of posterior cingulate and occipital sulci",
+        "3": "extreme widening of posterior cingulate and occipital sulci",
+        "2": "substantial sulcal widening of posterior cingulate and parieto-occipital sulci, substantial gyral atrophy"
+    },
+    "MTA": {
+        "0": "no atrophy, no widening of the temporal horn of lateral ventricle",
+        "2": "also widening of temporal horn of lateral ventricle",
+        "1": "widening of the temporal horn of lateral ventricle",
+        "3": "moderate loss of hippocampal volume (decrease in height)"
+    }
+}
