@@ -51,62 +51,61 @@ def calculate_2d_iou_of_multiple_boxes(boxes1, boxes2):
 
 def group_and_merge_3d_bboxes_v2(bboxes_slice,num_concat=50, 
                              img_size=None, eps=None, max_objects_k=None,
-                             overlap_threshold=0.7, discard_inner_iou=0.9,min_slices=2):
-    """
-    3D bounding box merging with per-slice 2D IoU filtering
+                             overlap_threshold=0.8, discard_inner_iou=0.9,min_slices=2,continuity_threshold=0.7):
     
-    Args:
-        # bboxes_slice: [[ [x_min, y_min,  x_max, y_max, ], ...],...] bboxes for each slice in order of concat from left to right
-
-        img_size: (width, height) for normalization
-        max_objects_k: Max expected 3D objects
-        overlap_threshold: Discard if 2D IoU > threshold (0-1)
-        min_slices: Minimum slices required for a valid 3D object
-        
-    Returns:
-        List of merged 3D bboxes: [[x_min, y_min, z_min, x_max, y_max, z_max], ...]
-    """
-    # bbox_without_z = [b[:4] for b in bboxes_with_z]
+    
+    if not bboxes_slice:
+        return []
+    
     if not img_size:
         width, height = 1, 1
     else:
         width, height = img_size
     
-    slice_idx_map_similar_slice = {}
-    slice_idx_map_similar_slice[0]=[0]
-    for i in range(1, len(bboxes_slice)):
-        for j in slice_idx_map_similar_slice.keys():
-            if calculate_2d_iou_of_multiple_boxes([bboxes_slice[i]], [bboxes_slice[j]]) > overlap_threshold:
-                slice_idx_map_similar_slice[j].append(i)
-                break
-            else:
-                if i not in slice_idx_map_similar_slice.keys():
-                    slice_idx_map_similar_slice[i]=[i]
-    max_idx=max(slice_idx_map_similar_slice.keys())
+    # Group slice indices with similar boxes
+    slice_groups = []
     
-
-    max_z=max (slice_idx_map_similar_slice[max_idx])
-    min_z=min (slice_idx_map_similar_slice[max_idx])
-    print("before",min_z,max_z)
-    min_z=float((min_z+1)/num_concat) 
-    max_z=float((max_z+1)/num_concat)
-    print("min_z",min_z,"max_z",max_z)
-    print("majority", len(slice_idx_map_similar_slice[max_idx]),"bbox")
-  
+    for i, current_boxes in enumerate(bboxes_slice):
+        if not current_boxes:  # Skip empty slices
+            continue
+            
+        matched = False
+        
+        # Try to match with existing groups
+        for group in slice_groups:
+            # Compare with the most recent slice in the group for better continuity
+            reference_slice_idx = group[-1]
+            reference_boxes = bboxes_slice[reference_slice_idx]
+            
+            if calculate_2d_iou_of_multiple_boxes(current_boxes, reference_boxes) > overlap_threshold:
+                group.append(i)
+                matched = True
+                break
+        
+        if not matched:
+            slice_groups.append([i])
+    
     output = []
-    sample_slice=bboxes_slice[max_idx]
-    x_min, y_min, x_max, y_max = sample_slice[0], sample_slice[1], sample_slice[2], sample_slice[3]
-    for box_2d in sample_slice:
-       
-            output.append((
-                x_min * width, y_min * height, min_z,
-                x_max * width, y_max * height, max_z
-            ))
+    for group_indices in slice_groups:
+        if len(group_indices) < min_slices:
+            continue
+        
+        # Calculate z-coordinates (normalized)
+        z_min = float() / num_concat
+        z_max = float(max(group_indices)) / num_concat
+        group_continuity_threshold= len(group_indices)/(max(group_indices)- min(group_indices)) 
+        if group_continuity_threshold< continuity_threshold:
+            print("skip non_continuity_threshold",group_continuity_threshold)
+            continue
 
+        for bbox in bboxes_slice[group_indices[0]]:
+
+            x_min, y_min, x_max, y_max = bbox
+        
+            output.append([x_min, y_min, z_min, x_max, y_max, z_max])
+    
     return output
-
-# 
-
+  
 def bboxes_overlap_2d(bbox1, bbox2):
     """
     Check if two 2D bounding boxes overlap (IoU > 0).
@@ -192,6 +191,70 @@ def draw_3d_bbox_wireframe_v2(shape, bboxes, line_thickness=1):
         volume[z_min:z_max+1, y_max, x_max-t+1:x_max+1] = 1  # Back Top
 
     return volume
+
+def draw_3d_bbox_filled(shape, bboxes):
+    """
+    Create a 3D volume with filled bounding boxes, each having a unique label.
+
+    Args:
+        shape: Tuple of (Z, H, W) dimensions for the output volume.
+        bboxes: List of bboxes in format [x_min, y_min, z_min, x_max, y_max, z_max]
+                or a single bbox.
+
+    Returns:
+        3D numpy array (Z, H, W) with filled boxes labeled with unique integers (1, 2, 3, ...).
+        Background is 0.
+    """
+    volume = np.zeros(shape, dtype=np.uint16)  # Use uint16 to support many labels
+
+    # Handle single bbox input
+    if isinstance(bboxes, (list, np.ndarray)) and len(bboxes) == 6 and not isinstance(bboxes[0], (list, np.ndarray)):
+        bboxes = [bboxes]
+
+    for idx, bbox in enumerate(bboxes, start=1):  # Start labels from 1
+        x_min, y_min, z_min, x_max, y_max, z_max = [int(round(c)) for c in bbox]
+
+        # Clip to volume bounds
+        x_min = max(0, x_min)
+        y_min = max(0, y_min)
+        z_min = max(0, z_min)
+        x_max = min(shape[2] - 1, x_max)
+        y_max = min(shape[1] - 1, y_max)
+        z_max = min(shape[0] - 1, z_max)
+
+        volume[z_min:z_max + 1, y_min:y_max + 1, x_min:x_max + 1] = idx
+
+    return volume
+
+
+def draw_3d_bbox_labels(shape, bboxes):
+    """
+    Create a label volume with unique values per bounding box.
+
+    Args:
+        shape: Tuple (D, H, W) – the shape of the output volume.
+        bboxes: List of [x_min, y_min, z_min, x_max, y_max, z_max] boxes.
+
+    Returns:
+        A 3D numpy array with labels.
+    """
+    volume = np.zeros(shape, dtype=np.uint8)
+
+    for i, bbox in enumerate(bboxes, start=1):
+        x_min, y_min, z_min, x_max, y_max, z_max = [int(round(c)) for c in bbox]
+
+        # Clip to bounds
+        x_min = max(0, x_min)
+        y_min = max(0, y_min)
+        z_min = max(0, z_min)
+        x_max = min(shape[2] - 1, x_max)
+        y_max = min(shape[1] - 1, y_max)
+        z_max = min(shape[0] - 1, z_max)
+
+        volume[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1] = i
+
+    return volume
+
 
 def draw_3d_bbox_wireframe(volume, bboxes, color=1.0, clip_to_volume=True, line_thickness=3):
     """

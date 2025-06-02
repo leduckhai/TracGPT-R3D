@@ -23,8 +23,8 @@ uid = str(uuid.uuid4())
 num_concat = 50
 tag = "overlap"
 # this is the save directory
-source_root = "/home/ubuntu/repo/TracGPT-R3D/clean_data"
-target_root = "/home/ubuntu/repo/TracGPT-R3D/clean_data_3d"
+source_root = "/home/ducnguyen/sync_local/repo/TracGPT/clean_data"
+target_root = "/home/ducnguyen/sync_local/repo/TracGPT/clean_data_3d"
 
 target_root = os.path.join(target_root, f"{num_concat}_{tag}_slices", f"{uid}")
 print("target root", target_root)
@@ -130,33 +130,21 @@ def process_data():
                 s for s in slide_base if slide_shape_map[s].shape == reference_shape
             ]
 
-            slide_shape_map["background"] = np.zeros(reference_shape)
-            annot_shape_map["background"] = np.zeros(reference_shape)
-
             slide_idx_map = {}
             for i, slide in enumerate(keep_slides):
                 slide_idx_map[slide] = i
 
-            #  save the index of keep_slides
-
+            patient_chunks=[]
             for i in tqdm(
                 range(0, len(keep_slides) - num_concat + 1), desc="Processing slides"
             ):
-                chunk_idx = i
                 chunk_slides = keep_slides[i : i + num_concat]
-                if len(chunk_slides) < num_concat:
-                    chunk_slides.extend(
-                        ["background"] * (num_concat - len(chunk_slides))
-                    )
-                assert len(chunk_slides) == num_concat
-
+                
+                chunk_data=merge_slices(chunk_slides,slide_data_map)
+                patient_chunks.append(chunk_data)
+            with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
+                json.dump(patient_chunks, f)
     print("target_root", target_root)
-
-
-def merge_slides_data(slides, slide_data_map):
-
-    pass
-
 
 def merge_A3_data(list_A3):
     result = defaultdict(int)
@@ -206,7 +194,7 @@ def merge_A1_data(list_A1):
     bbox_input = []
     for bboxes_ls in list_A1:
         parsed = ast.literal_eval(bboxes_ls)
-        bbox_input.extend(parsed)
+        bbox_input.append(parsed)
     output = group_and_merge_3d_bboxes_v2(bbox_input)
     return output
 
@@ -229,7 +217,6 @@ def save_dsc_data(save_path="desc.json"):
             for line in lines:
                 try:
 
-                    # Split into scale, score, and description
                     scale_part, desc_part = line.split("=", 1)
                     scale = scale_part.strip()
 
@@ -237,11 +224,8 @@ def save_dsc_data(save_path="desc.json"):
                     score = int(score_part.strip())
                     description = description.strip()
 
-                    # Initialize nested dict if scale doesn't exist
                     if scale not in result:
                         result[scale] = {}
-
-                    # Assign description to the score key
 
                     result[scale][score] = description
                 except Exception as e:
@@ -267,15 +251,13 @@ def merge_slices(list_slices, slice_data_map):
     output["A3"] = merge_A3_data([slice["A3"] for slice in slice_data])
     output["A2"] = merge_A2_data(output["A3"])
     output["A4"] = merge_A4_data([slice["A4"] for slice in slice_data])
-    save_path = "sample.json"
-    with open(save_path, "w") as f:
-        json.dump(output, f, indent=4)
+    output["slice order"]=list_slices
     return output
 
 
 if __name__ == "__main__":
 
-    sample_file = "clean_data_3d/50_slices/3393c76c-3917-4791-83e7-e32936431012/train/data/OAS1_0056.json"
+    sample_file = "/home/ducnguyen/sync_local/repo/TracGPT/clean_data/train/data/OAS1_0002.json"
     with open(sample_file, "r") as f:
         data = json.load(f)
     slides = [data["Slide"] for data in data]
@@ -287,5 +269,5 @@ if __name__ == "__main__":
                 del d[k]
         slide_map[d["Slide"]] = d
     sample = slides[:50]
-    merge_slices(sample, slide_map)
-    # process_data()
+    # merge_slices(sample, slide_map)
+    process_data()
