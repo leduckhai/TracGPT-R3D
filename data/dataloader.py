@@ -6,24 +6,29 @@ import os
 import json 
 import pickle
 import sys 
+sys.path.append("/home/ubuntu/repo/TracGPT-R3D")
 from transformers import AutoTokenizer
+from data_process.util import convert_list_slice_paths_to_3d
 class TracDataset(Dataset):
     def __init__(self,model_type, mode,patient_records,root_dir, transform=None):
+        self.root_dir="/home/ubuntu/repo/TracGPT-R3D/VLMTrac/50_chunk_data"
+        self.root_dir=os.path.join(self.root_dir,mode)
+        self.image_dir=os.path.join(self.root_dir,"image")
+        self.data_dir=os.path.join(self.root_dir,"data")
         self.tokenizer= AutoTokenizer.from_pretrained(model_type)
         self.mode = mode
-        self.patient_records = patient_records
-        self.root_dir = root_dir
-        self.slice_records=[]
-        for record in patient_records:
-            path=os.path.join(root_dir,"data",record)
+        self.data_paths=   [os.path.join(self.data_dir,record) for record in patient_records]
+        self.chunk_data=[]
+        for path in self.data_paths:
             with open(path,"r") as f:
                 data=json.load(f)
-                self.slice_records.extend(data)
+                self.chunk_data.extend(data)
+        print("len",len(self.chunk_data))
         self.max_seqs_len=100
         self.prefix_len=300
      
     def __len__(self):
-        return len(self.slice_records)
+        return len(self.chunk_data)
     def padding(self,max_seq_len,tokens):
         padding = max_seq_len - tokens.size(0) 
         if padding > 0:
@@ -94,25 +99,27 @@ class TracDataset(Dataset):
                 return question_tk_pad,question_mask,question_len
 
     def __getitem__(self, idx):
-        slide_record=self.slice_records[idx]
-        print("slide_record",slide_record,type(slide_record))
-        print("pid",slide_record["Patient ID"],"idx",idx)
-        chunk_idx=slide_record["chunk_idx"]
-        patient_id=slide_record["Patient ID"]
-        image_path = os.path.join(self.root_dir, "image", patient_id,f'{chunk_idx}.pkl')
-        with open(image_path, "rb") as f:
-            image = pickle.load(f)
-        sys.stdout.flush()
+        chunk=self.chunk_data[idx]  
+        # print("chunk",chunk)
+        slice_order=chunk["slice order"] 
+        patient_id=chunk["Patient ID"]   
+
         
-        q1,a1,q2,a2,q3,a3,q4,a4=slide_record["Q1"],slide_record["A1"],slide_record["Q2"],slide_record["A2"],slide_record["Q3"],slide_record["A3"],slide_record["Q4"],slide_record["A4"]
-        index=slide_record["slide_in_chunk_th"]
-        q1,a1,idx1=self.process_input_text(q1,a1)
-        q2,a2,idx2=self.process_input_text(q2,a2)
-        q3,a3,idx3=self.process_input_text(q3,a3)
-        q4,a4,idx4=self.process_input_text(q4,a4)
-        assert idx1==idx2==idx3==idx4 
+        image_path = [os.path.join(self.image_dir, patient_id,f'{slice}.pkl') for slice in slice_order]
+        image_3d=convert_list_slice_paths_to_3d(image_path)
+        print("image_3d",image_3d.shape)
+        
+        q1=chunk["Q1"][0]
+        a1=chunk["A1"]
+        q2=chunk["Q2"][0]
+        a2=chunk["A2"]
+        q3=chunk["Q3"][0]
+        a3=chunk["A3"]
+        q4=chunk["Q4"][0]
+        a4=chunk["A4"]
+        
         return{
-        "image":image,
+        "image":image_3d,
         "q1":q1,
         "a1":a1,
         "q2":q2,
@@ -121,21 +128,31 @@ class TracDataset(Dataset):
         "a3":a3,
         "q4":q4,
         "a4":a4,
-        "index":idx1
 
         } 
-    # image,q1,a1,q2,a2,q3,a3,q4,a4,index
+
 if __name__=="__main__":
     import os
     import random
     from sklearn.model_selection import train_test_split
-    train_val_dir="/home/ubuntu/repo/TracGPT-R3D/clean_data_3d/50_slices/3393c76c-3917-4791-83e7-e32936431012/train"
+    train_val_dir="/home/ubuntu/repo/TracGPT-R3D/VLMTrac/50_chunk_data/train"
     patient_records=os.listdir(os.path.join(train_val_dir,"data"))
     patient_records = sorted(patient_records) 
     train_records, val_records = train_test_split(patient_records, test_size=0.2, random_state=42)
     train_set=TracDataset("gpt2","train",train_records,train_val_dir)
-    image,q1,a1,q2,a2,q3,a3,q4,a4,index=train_set[0]
-    print("image",image.shape, "q1",q1.shape,"a1",a1.shape,"q2",q2.shape,"a2",a2.shape,"q3",q3.shape,"a3",a3.shape,"q4",q4.shape,"a4",a4.shape,"index",index)
+    # image,q1,a1,q2,a2,q3,a3,q4,a4=train_set[0]
+    image=train_set[0]["image"]
+    q1=train_set[0]["q1"]
+    a1=train_set[0]["a1"]
+    q2=train_set[0]["q2"]
+    a2=train_set[0]["a2"]
+    q3=train_set[0]["q3"]
+    a3=train_set[0]["a3"]
+    q4=train_set[0]["q4"]
+    a4=train_set[0]["a4"]
 
+    print("trainset 0",train_set[0])
+    # print("image",image.shape, "q1",q1.shape,"a1",a1.shape,"q2",q2.shape,"a2",a2.shape,"q3",q3.shape,"a3",a3.shape,"q4",q4.shape,"a4",a4.shape)
+    # print("image",image.shape,q1,a1,q2,a2,q3,a3,q4,a4)
 # max_len_q1 31 max_len_q2 67 max_len_q3 63 max_len_q4 63
 # max_len_a1 584 max_len_a2 231 max_len_a3 30 max_len_a4 27

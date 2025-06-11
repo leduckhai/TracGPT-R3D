@@ -6,7 +6,5 @@ __pycache__
 AI in Dementia Diagnosis Project - Notation.csv
 .venv
 test_gt_50.nii.gz
- **/*.nii.gz
-test_input_50.nii.gz
-test_labels_50.nii.gz
-test_merge_50.nii.gz
+
+VLMTrac
