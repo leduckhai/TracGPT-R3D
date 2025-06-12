@@ -1,3 +1,4 @@
+
 # Copyright (c) MONAI Consortium
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +12,7 @@
 
 from __future__ import annotations
 
+from transformers import ViTModel,ViTConfig
 from collections.abc import Sequence
 
 import torch
@@ -36,7 +38,7 @@ class ViT(nn.Module):
         mlp_dim: int = 3072,
         num_layers: int = 12,
         num_heads: int = 12,
-        pos_embed: str = "conv",
+        # pos_embed: str = "conv",
         classification: bool = False,
         num_classes: int = 2,
         dropout_rate: float = 0.0,
@@ -54,7 +56,7 @@ class ViT(nn.Module):
             mlp_dim (int, optional): dimension of feedforward layer. Defaults to 3072.
             num_layers (int, optional): number of transformer blocks. Defaults to 12.
             num_heads (int, optional): number of attention heads. Defaults to 12.
-            pos_embed (str, optional): position embedding layer type. Defaults to "conv".
+            # pos_embed (str, optional): position embedding layer type. Defaults to "conv".
             classification (bool, optional): bool argument to determine if classification is used. Defaults to False.
             num_classes (int, optional): number of classes if classification is used. Defaults to 2.
             dropout_rate (float, optional): faction of the input units to drop. Defaults to 0.0.
@@ -68,13 +70,13 @@ class ViT(nn.Module):
         Examples::
 
             # for single channel input with image size of (96,96,96), conv position embedding and segmentation backbone
-            >>> net = ViT(in_channels=1, img_size=(96,96,96), pos_embed='conv')
+            # >>> net = ViT(in_channels=1, img_size=(96,96,96), pos_embed='conv')
 
             # for 3-channel with image size of (128,128,128), 24 layers and classification backbone
-            >>> net = ViT(in_channels=3, img_size=(128,128,128), pos_embed='conv', classification=True)
+            # >>> net = ViT(in_channels=3, img_size=(128,128,128), pos_embed='conv', classification=True)
 
             # for 3-channel with image size of (224,224), 12 layers and classification backbone
-            >>> net = ViT(in_channels=3, img_size=(224,224), pos_embed='conv', classification=True, spatial_dims=2)
+            # >>> net = ViT(in_channels=3, img_size=(224,224), pos_embed='conv', classification=True, spatial_dims=2)
 
         """
 
@@ -93,7 +95,7 @@ class ViT(nn.Module):
             patch_size=patch_size,
             hidden_size=hidden_size,
             num_heads=num_heads,
-            pos_embed=pos_embed,
+            # # pos_embed=pos_embed,
             dropout_rate=dropout_rate,
             spatial_dims=spatial_dims,
         )
@@ -135,18 +137,22 @@ class ViT3DTower(nn.Module):
         self.config = config
         self.select_layer = config.vision_select_layer
         self.select_feature = config.vision_select_feature
-
+        
         self.vision_tower = ViT(
             in_channels=self.config.image_channel,
             img_size=self.config.image_size,
             patch_size=self.config.patch_size,
-            pos_embed="perceptron",
+            hidden_size=self.config.hidden_size,
+            # pos_embed="perceptron",
             spatial_dims=len(self.config.patch_size),
             classification=True,
+            num_heads= self.config.num_heads,
         )
 
     def forward(self, images):
         last_feature, hidden_states = self.vision_tower(images)
+        # print("last_feature shape:", last_feature.shape)
+        # print("hidden_states shape:", [hs.shape for hs in hidden_states])
         if self.select_layer == -1:
             image_features = last_feature
         elif self.select_layer < -1:
@@ -174,3 +180,29 @@ class ViT3DTower(nn.Module):
     @property
     def hidden_size(self):
         return self.vision_tower.hidden_size
+
+if __name__=="__main__":
+    image_channel=1
+    image_size=(32, 256, 256)
+    patch_size=(4, 16, 16)
+    batch_size=1
+    args = type('', (), {})() 
+    args.image_channel = image_channel
+    args.image_size = image_size
+    args.patch_size = patch_size
+    args.vision_select_layer = -1
+    args.vision_select_feature = 'cls_patch'
+    args.hidden_size = 512
+    args.vision_tower = 'vit3d'
+    args.mm_projector_type = 'spp'
+    args.proj_layer_type = 'linear'
+    args.proj_layer_num = 2
+    args.proj_pooling_type = 'spatial'
+    args.proj_pooling_size = 2
+    args.num_heads=8
+
+    img=torch.randn((batch_size, 1, *image_size)).to('cuda')
+    model= ViT3DTower(args)
+    model=model.to('cuda')
+    output = model(img)
+    print("Output shape:", output.shape)

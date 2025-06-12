@@ -8,3 +8,5 @@ AI in Dementia Diagnosis Project - Notation.csv
 test_gt_50.nii.gz
 
 VLMTrac
+
+.env

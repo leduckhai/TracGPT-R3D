@@ -84,10 +84,12 @@ class FullLinear(nn.Module):
 
 def build_mm_projector(config, delay_load=False, **kwargs):
     projector_type = getattr(config, 'mm_projector_type')
-
+    print(" build projector",projector_type)
     if projector_type == 'linear':
         return FullLinear(config)
-
+    # ([2, 2048, 768])
+    # in_dim=config.mm_hidden_size= 512
+    #
     elif projector_type == 'spp':
         return SpatialPoolingProjector(image_size=config.image_size,
                                         patch_size=config.patch_size,
@@ -112,7 +114,7 @@ class SpatialPoolingProjector(nn.Module):
         super().__init__()
         self.in_dim = in_dim
         self.pooling_size = pooling_size
-
+            
         self.num_patches_pre = [img // pch for img, pch in zip(image_size, patch_size)]
         self.num_patches_post = [num // pooling_size for num in self.num_patches_pre]
 
@@ -135,8 +137,9 @@ class SpatialPoolingProjector(nn.Module):
         self.pooling_type = pooling_type
 
     def forward(self, x):
+        print("x shape",x.shape)
         B = x.shape[0] # B*N*D
-
+        print("self.num_patches_pre",self.num_patches_pre)
         if self.pooling_type == 'spatial':
             to_3d = Rearrange("b (p1 p2 p3) d -> b d p1 p2 p3", b=B, d=self.in_dim, p1=self.num_patches_pre[0], p2=self.num_patches_pre[1], p3=self.num_patches_pre[2])
             x = to_3d(x)

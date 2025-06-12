@@ -9,3 +9,5 @@ tqdm==4.66.2
 datasets 
 nibabel
 transformers
+monai
+einops

@@ -6,12 +6,18 @@ import os
 import json 
 import pickle
 import sys 
-sys.path.append("/home/ubuntu/repo/TracGPT-R3D")
+import os
+from dotenv import load_dotenv
+from datasets import load_dataset
+load_dotenv()
+ROOT=os.getenv("ROOT")
+sys.path.append(ROOT)
 from transformers import AutoTokenizer
 from data_process.util import convert_list_slice_paths_to_3d
+from datasets import load_dataset
 class TracDataset(Dataset):
     def __init__(self,model_type, mode,patient_records,root_dir, transform=None):
-        self.root_dir="/home/ubuntu/repo/TracGPT-R3D/VLMTrac/50_chunk_data"
+        self.root_dir=os.path.join( ROOT,"VLMTrac/50_chunk_data")
         self.root_dir=os.path.join(self.root_dir,mode)
         self.image_dir=os.path.join(self.root_dir,"image")
         self.data_dir=os.path.join(self.root_dir,"data")
@@ -19,11 +25,14 @@ class TracDataset(Dataset):
         self.mode = mode
         self.data_paths=   [os.path.join(self.data_dir,record) for record in patient_records]
         self.chunk_data=[]
+        # if mode=="train":
+        #     for row in ds["train"]:
+        #         self.chunk_data.extend(data)
+        # print("len",len(self.chunk_data))
         for path in self.data_paths:
             with open(path,"r") as f:
                 data=json.load(f)
                 self.chunk_data.extend(data)
-        print("len",len(self.chunk_data))
         self.max_seqs_len=100
         self.prefix_len=300
      
@@ -150,8 +159,7 @@ if __name__=="__main__":
     a3=train_set[0]["a3"]
     q4=train_set[0]["q4"]
     a4=train_set[0]["a4"]
-
-    print("trainset 0",train_set[0])
+    #  (50, 496, 248)
     # print("image",image.shape, "q1",q1.shape,"a1",a1.shape,"q2",q2.shape,"a2",a2.shape,"q3",q3.shape,"a3",a3.shape,"q4",q4.shape,"a4",a4.shape)
     # print("image",image.shape,q1,a1,q2,a2,q3,a3,q4,a4)
 # max_len_q1 31 max_len_q2 67 max_len_q3 63 max_len_q4 63

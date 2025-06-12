@@ -17,9 +17,8 @@ sys.path.append(ROOT)
 from model.loss import L1Loss, IoU3DLoss
 
 
-class TracMetaModel:
+class TracMetaModel(ABC):
     def __init__(self, config):
-        super(TracMetaModel, self).__init__(config)
 
         self.config = config
         self.bbox3d_enable = False
@@ -41,6 +40,13 @@ class TracMetaModel:
 
             self.l1_loss = L1Loss()
             self.iou3d_loss = IoU3DLoss()
+
+    @abstractmethod
+    def get_model(self):
+        pass
+    @abstractmethod
+    def get_input_embeddings(self):
+        pass
 
     def get_vision_tower(self):
         vision_tower = getattr(self, 'vision_tower', None)
@@ -111,17 +117,10 @@ class TracMetaModel:
         self.l1_loss = L1Loss()
         self.iou3d_loss = IoU3DLoss()
 
-class TracMetaForCausalLM(ABC):
-    @abstractmethod
-    def get_model(self):
-        pass
-
-    def get_vision_tower(self):
-        return self.get_model().get_vision_tower()
-
     def encode_images(self, images):
-        image_features = self.get_model().get_vision_tower()(images)
-        image_features = self.get_model().mm_projector(image_features)
+        image_features = self.get_vision_tower()(images)
+        print("image f1",image_features.shape)
+        image_features = self.mm_projector(image_features)
         return image_features
 
     def prepare_inputs_for_multimodal(
@@ -133,7 +132,14 @@ class TracMetaForCausalLM(ABC):
             return input_ids, position_ids, attention_mask, past_key_values, None, labels
         else:
             image_features = self.encode_images(images)
-            inputs_embeds = self.get_model().embed_tokens(input_ids)
+            print("image f2",image_features.shape)
+            # inputs_embeds = self.get_model().embed_tokens(input_ids)
+            print("input_ids",input_ids.shape)
+            # inputs_id torch.Size([2, 32])
+            inputs_embeds = self.get_input_embeddings()(input_ids)
+            print("inputs_embeds",inputs_embeds.shape)
+            # image f2 torch.Size([2, 256, 512])
+            # inputs_embeds torch.Size([2, 32, 2560])
             inputs_embeds = torch.cat(
                 (inputs_embeds[:, :1, :], image_features, inputs_embeds[:, (image_features.shape[1] + 1):, :]), dim=1)
         return None, position_ids, attention_mask, past_key_values, inputs_embeds, labels
@@ -179,3 +185,13 @@ class TracMetaForCausalLM(ABC):
                 input_embeddings[-num_new_tokens:] = embed_tokens_weight
             else:
                 raise ValueError(f"Unexpected embed_tokens_weight shape. Pretrained: {embed_tokens_weight.shape}. Current: {input_embeddings.shape}. Numer of new tokens: {num_new_tokens}.")
+
+# class TracMetaForCausalLM(ABC):
+#     @abstractmethod@
+   
+
+#     @abstractmethod
+#     def get_vision_tower(self):
+#         pass
+
+    
