@@ -7,7 +7,7 @@ import transformers
 from transformers import AutoTokenizer, LlamaForCausalLM
 from dataclasses import dataclass, field
 # from LaMed.src.dataset.multi_dataset import UniDatasets, CapDataset, TextDatasets, VQADataset
-from model.LanguageModel.Trac_phi import TracPhiForCausalLM
+from model.LanguageModel.Trac_phi3 import TracPhi3ForCausalLM
 
 os.environ['MASTER_ADDR'] = 'localhost'
 os.environ['MASTER_PORT'] = '12355'
@@ -222,49 +222,55 @@ def find_all_linear_names(model):
 
 @dataclass
 class DataCollator:
-    def __init__(self, seg_enable):
-        self.seg_enable = seg_enable
+    def __init__(self,bbox_enable):
+        self.bbox_enable = bbox_enable
     def __call__(self, batch: list) -> dict:
-        if self.seg_enable:
-            images, input_ids, labels, attention_mask, segs = tuple(
-                [b[key] for b in batch] for key in ('image', 'input_id', 'label', 'attention_mask', 'seg'))
+        
 
-            images = torch.cat([_.unsqueeze(0) for _ in images], dim=0)
-            input_ids = torch.cat([_.unsqueeze(0) for _ in input_ids], dim=0)
-            labels = torch.cat([_.unsqueeze(0) for _ in labels], dim=0)
-            attention_mask = torch.cat([_.unsqueeze(0) for _ in attention_mask], dim=0)
 
-            for i, seg in enumerate(segs):
-                if seg.sum() == 0:
-                    segs[i] = torch.zeros((1, 1, 32, 256, 256))
-                else:
-                    segs[i] = seg.unsqueeze(0)
-            segs = torch.cat(segs, dim=0)
+    # def __init__(self, seg_enable):
+    #     self.seg_enable = seg_enable
+    # def __call__(self, batch: list) -> dict:
+    #     if self.seg_enable:
+    #         images, input_ids, labels, attention_mask, segs = tuple(
+    #             [b[key] for b in batch] for key in ('image', 'input_id', 'label', 'attention_mask', 'seg'))
 
-            return_dict = dict(
-                images=images,
-                input_ids=input_ids,
-                labels=labels,
-                attention_mask=attention_mask,
-                segs=segs,
-            )
-        else:
-            images, input_ids, labels, attention_mask = tuple(
-                [b[key] for b in batch] for key in ('image', 'input_id', 'label', 'attention_mask'))
+    #         images = torch.cat([_.unsqueeze(0) for _ in images], dim=0)
+    #         input_ids = torch.cat([_.unsqueeze(0) for _ in input_ids], dim=0)
+    #         labels = torch.cat([_.unsqueeze(0) for _ in labels], dim=0)
+    #         attention_mask = torch.cat([_.unsqueeze(0) for _ in attention_mask], dim=0)
 
-            images = torch.cat([_.unsqueeze(0) for _ in images], dim=0)
-            input_ids = torch.cat([_.unsqueeze(0) for _ in input_ids], dim=0)
-            labels = torch.cat([_.unsqueeze(0) for _ in labels], dim=0)
-            attention_mask = torch.cat([_.unsqueeze(0) for _ in attention_mask], dim=0)
+    #         for i, seg in enumerate(segs):
+    #             if seg.sum() == 0:
+    #                 segs[i] = torch.zeros((1, 1, 32, 256, 256))
+    #             else:
+    #                 segs[i] = seg.unsqueeze(0)
+    #         segs = torch.cat(segs, dim=0)
 
-            return_dict = dict(
-                images=images,
-                input_ids=input_ids,
-                labels=labels,
-                attention_mask=attention_mask,
-            )
+    #         return_dict = dict(
+    #             images=images,
+    #             input_ids=input_ids,
+    #             labels=labels,
+    #             attention_mask=attention_mask,
+    #             segs=segs,
+    #         )
+    #     else:
+    #         images, input_ids, labels, attention_mask = tuple(
+    #             [b[key] for b in batch] for key in ('image', 'input_id', 'label', 'attention_mask'))
 
-        return return_dict
+    #         images = torch.cat([_.unsqueeze(0) for _ in images], dim=0)
+    #         input_ids = torch.cat([_.unsqueeze(0) for _ in input_ids], dim=0)
+    #         labels = torch.cat([_.unsqueeze(0) for _ in labels], dim=0)
+    #         attention_mask = torch.cat([_.unsqueeze(0) for _ in attention_mask], dim=0)
+
+    #         return_dict = dict(
+    #             images=images,
+    #             input_ids=input_ids,
+    #             labels=labels,
+    #             attention_mask=attention_mask,
+    #         )
+
+    #     return return_dict
 
 
 def main():
@@ -311,21 +317,21 @@ def main():
     mine
     """
 
-    model = TracPhiForCausalLM(model_args)
-    model.all_to_device('cuda')  
+    model = TracPhi3ForCausalLM(model_args)
+    # model.all_to_device('cuda')  
 
 
     # Example inputs
-    batch_size = 2
-    seq_length = 32
-    vocab_size = tokenizer.vocab_size
+    # batch_size = 2
+    # seq_length = 32
+    # vocab_size = tokenizer.vocab_size
 
-    input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to('cuda')
-    attention_mask = torch.ones((batch_size, seq_length)).to('cuda')
-    position_ids = torch.arange(seq_length).expand(batch_size, -1).to('cuda')
-    images = torch.randn((batch_size, 1, *model_args.image_size)).to('cuda')
-    bboxes3d = torch.randn((batch_size, 8, 3)).to('cuda')
-    print("log")
+    # input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to('cuda')
+    # attention_mask = torch.ones((batch_size, seq_length)).to('cuda')
+    # position_ids = torch.arange(seq_length).expand(batch_size, -1).to('cuda')
+    # images = torch.randn((batch_size, 1, *model_args.image_size)).to('cuda')
+    # bboxes3d = torch.randn((batch_size, 8, 3)).to('cuda')
+    # print("log")
     # Text-only generation
     # generated_ids = model.generate(
     #     inputs=input_ids,
@@ -334,28 +340,29 @@ def main():
     # )
 
     # Multimodal generation with bbox
-    generated_ids, bbox_logits = model.generate(
-        inputs=input_ids,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-        images=images,
-        bbox3d_enable=True,
-        max_length=50
-    )
+    # generated_ids, bbox_logits = model.generate(
+    #     inputs=input_ids,
+    #     attention_mask=attention_mask,
+    #     position_ids=position_ids,
+    #     images=images,
+    #     bbox3d_enable=True,
+    #     max_length=50
+    # )
 
-    print("\n=== MULTIMODAL GENERATION ===")
-    print("Generated Text:")
-    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
+    # print("\n=== MULTIMODAL GENERATION ===")
+    # print("Generated Text:")
+    # print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 
-    print("\n3D Bounding Box Predictions:")
-    for i, bbox in enumerate(bbox_logits):
-        print(f"\nObject {i+1}:")
-        # Format the bbox coordinates nicely
-        corners = bbox.cpu().detach().numpy()
-        for j, corner in enumerate(corners):
-            print(f"Corner {j+1}: x={corner[0]:.2f}, y={corner[1]:.2f}, z={corner[2]:.2f}")
-    """
-    mine"""
+    # print("\n3D Bounding Box Predictions:")
+    # for i, bbox in enumerate(bbox_logits):
+    #     print(f"\nObject {i+1}:")
+    #     # Format the bbox coordinates nicely
+    #     corners = bbox.cpu().detach().numpy()
+    #     for j, corner in enumerate(corners):
+    #         print(f"Corner {j+1}: x={corner[0]:.2f}, y={corner[1]:.2f}, z={corner[2]:.2f}")
+    # """
+    # mine"""
+
     # if model_args.vision_tower is not None:
     #     if 'llama' in model_args.model_type:
     #         model = LamedLlamaForCausalLM.from_pretrained(

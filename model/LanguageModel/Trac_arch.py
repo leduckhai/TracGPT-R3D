@@ -17,9 +17,8 @@ sys.path.append(ROOT)
 from model.loss import L1Loss, IoU3DLoss
 
 
-class TracMetaModel(ABC):
+class TracMetaModel():
     def __init__(self, config):
-
         self.config = config
         self.bbox3d_enable = False
 
@@ -41,12 +40,7 @@ class TracMetaModel(ABC):
             self.l1_loss = L1Loss()
             self.iou3d_loss = IoU3DLoss()
 
-    @abstractmethod
-    def get_model(self):
-        pass
-    @abstractmethod
-    def get_input_embeddings(self):
-        pass
+    
 
     def get_vision_tower(self):
         vision_tower = getattr(self, 'vision_tower', None)

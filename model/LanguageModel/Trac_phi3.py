@@ -9,36 +9,32 @@ load_dotenv()
 ROOT=os.getenv("ROOT")
 import sys
 sys.path.append(ROOT)
-from transformers import AutoConfig, AutoModelForCausalLM, Phi3Config, Phi3Model,PhiModel,PhiConfig,PhiForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, Phi3Config, Phi3Model,PhiModel,PhiConfig,PhiForCausalLM,Phi3ForCausalLM
 
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.generation.utils import GenerateOutput
 from model.LanguageModel.Trac_arch import TracMetaModel
 
-class TracPhi2Config(PhiConfig):
-    model_type="trac-phi2"
-
 class TracPhi3Config(Phi3Config):
     model_type="trac-phi3"
 
 
-class TracPhiModel(TracMetaModel,PhiModel):
-    config_class=TracPhi2Config
-    def __init__(self,config:PhiConfig):
+class TracPhi3Model(TracMetaModel, Phi3Model):
+    config_class = TracPhi3Config
 
-class TracPhiForCausalLM(TracMetaModel):
-    config_class=TracPhiConfig
-    def __init__(self,config,langModel="phi-2"):
-        TracMetaModel.__init__(self,config)
-        if langModel=="phi-2":
+    def __init__(self, config: Phi3Config):
+        super(TracMetaModel, self).__init__(config)
 
-            self.baseModel=AutoModelForCausalLM.from_pretrained("microsoft/phi-2", torch_dtype="auto", trust_remote_code=True)
-        else:
-            raise Exception("Unknown langModel")
-        # self.metaModel=TracMetaModel(config)
+class TracPhi3ForCausalLM(Phi3ForCausalLM):
+
+    config_class=TracPhi3Config
+    def __init__(self,config):
+        super(TracPhi3ForCausalLM, self).__init__(config)
+       
+        self.model=TracPhi3Model(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
+        self.post_init()
 
     def all_to_device(self,device="cuda"):
         baseModel=self.get_model()
@@ -49,10 +45,10 @@ class TracPhiForCausalLM(TracMetaModel):
             self.mm_projector.to(device)
 
     def get_model(self):
-        return self.baseModel
+        return self.model
     
     def get_input_embeddings(self):
-        return self.baseModel.get_input_embeddings()
+        return self.model.get_input_embeddings()
 
 
 
@@ -192,12 +188,8 @@ class TracPhiForCausalLM(TracMetaModel):
                 images,
             )
         else:
-            print("go there")
-            inputs_embeds=self.baseModel.get_input_embeddings()(inputs)
-            # inputs_embeds = self.get_model().embed_tokens(inputs)
-
+            inputs_embeds=super().get_input_embeddings()(inputs)
         if bbox3d_enable:
-            print ("log 2")
             outputs = super().generate(
                 inputs_embeds=inputs_embeds,
                 output_hidden_states=True,
@@ -253,62 +245,64 @@ class TracPhiForCausalLM(TracMetaModel):
         return inputs
 
 
-AutoConfig.register("trac-phi2", TracPhiConfig)
-AutoModelForCausalLM.register(TracPhiConfig, TracPhiForCausalLM)
+AutoConfig.register("trac-phi3", TracPhi3Config)
+AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 
 if __name__=="__main__":
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained("microsoft/phi-2")
-    config = AutoConfig.from_pretrained("microsoft/phi-2", model_type="trac-phi2")
-    config.bbox3d_enable = True 
-    config.mm_hidden_size = 512  
-    config.bbox3d_token_id = 50295  
-    config.vision_tower="vit3d"
+    model= TracPhi3ForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct", config=TracPhi3Config())
+    # from transformers import AutoTokenizer
+    # tokenizer = AutoTokenizer.from_pretrained("microsoft/phi-2")
+    # config = AutoConfig.from_pretrained("microsoft/phi-2", model_type="trac-phi2")
+    # config.bbox3d_enable = True 
+    # config.mm_hidden_size = 512  
+    # config.bbox3d_token_id = 50295  
+    # config.vision_tower="vit3d"
 
-    model = TracPhiForCausalLM(config)
-    model.get_model().to('cuda')  
+    # model = TracPhiForCausalLM.from_pretrained("microsoft/phi-2", config=config)
+    # model.get_model().to('cuda')  
 
 
-    # Example inputs
-    batch_size = 2
-    seq_length = 32
-    vocab_size = config.vocab_size
+    # # Example inputs
+    # batch_size = 2
+    # seq_length = 32
+    # vocab_size = config.vocab_size
 
-    input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to('cuda')
-    attention_mask = torch.ones((batch_size, seq_length)).to('cuda')
-    position_ids = torch.arange(seq_length).expand(batch_size, -1).to('cuda')
-    images = torch.randn((batch_size, 3, 224, 224)).to('cuda')
-    bboxes3d = torch.randn((batch_size, 8, 3)).to('cuda')
-    print("log")
-    # Text-only generation
-    # generated_ids = model.generate(
+    # input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to('cuda')
+    # attention_mask = torch.ones((batch_size, seq_length)).to('cuda')
+    # position_ids = torch.arange(seq_length).expand(batch_size, -1).to('cuda')
+    # images = torch.randn((batch_size, 3, 224, 224)).to('cuda')
+    # bboxes3d = torch.randn((batch_size, 8, 3)).to('cuda')
+    # # Text-only generation
+    # # generated_ids = model.generate(
+    # #     inputs=input_ids,
+    # #     attention_mask=attention_mask,
+    # #     max_length=50
+    # # )
+
+    # # Multimodal generation with bbox
+    # generated_ids, bbox_logits = model.generate(
     #     inputs=input_ids,
     #     attention_mask=attention_mask,
+    #     position_ids=position_ids,
+    #     images=images,
+    #     bbox3d_enable=True,
     #     max_length=50
     # )
 
-    # Multimodal generation with bbox
-    generated_ids, bbox_logits = model.generate(
-        inputs=input_ids,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-        images=images,
-        bbox3d_enable=True,
-        max_length=50
-    )
+    # # Print results
+    # print("=== TEXT-ONLY GENERATION ===")
+    # print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 
-    # Print results
-    print("=== TEXT-ONLY GENERATION ===")
-    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
+    # print("\n=== MULTIMODAL GENERATION ===")
+    # print("Generated Text:")
+    # print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
 
-    print("\n=== MULTIMODAL GENERATION ===")
-    print("Generated Text:")
-    print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
+    # print("\n3D Bounding Box Predictions:")
+    # for i, bbox in enumerate(bbox_logits):
+    #     print(f"\nObject {i+1}:")
+    #     # Format the bbox coordinates nicely
+    #     corners = bbox.cpu().detach().numpy()
+    #     for j, corner in enumerate(corners):
+    #         print(f"Corner {j+1}: x={corner[0]:.2f}, y={corner[1]:.2f}, z={corner[2]:.2f}")
+    
 
-    print("\n3D Bounding Box Predictions:")
-    for i, bbox in enumerate(bbox_logits):
-        print(f"\nObject {i+1}:")
-        # Format the bbox coordinates nicely
-        corners = bbox.cpu().detach().numpy()
-        for j, corner in enumerate(corners):
-            print(f"Corner {j+1}: x={corner[0]:.2f}, y={corner[1]:.2f}, z={corner[2]:.2f}")
