@@ -508,10 +508,9 @@ if __name__=="__main__":
     sample=draw_bbox_volume(volume, int_bboxes)
     save_path="save.nii.gz"
     if sample.shape[-1] == 3:
-    # Convert RGB to grayscale for saving (e.g., mean of channels)
         sample_to_save = sample.mean(axis=-1)  # (Z, H, W)
     else:
-        sample_to_save = sample  # Already suitable shape
+        sample_to_save = sample 
     print("sample_to_save",sample_to_save.shape)
     nifti_img = nib.Nifti1Image(sample_to_save, affine=np.eye(4))
     nib.save(nifti_img, "save.nii.gz")

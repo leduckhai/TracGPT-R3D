@@ -20,7 +20,7 @@ with open(dsc_path, "r") as f:
     desc_map = json.load(f)
 
 uid = str(uuid.uuid4())
-num_concat = 50
+num_concat =-1
 tag = "overlap"
 # this is the save directory
 source_root = "/home/ducnguyen/sync_local/repo/TracGPT/clean_data"
@@ -135,13 +135,21 @@ def process_data():
                 slide_idx_map[slide] = i
 
             patient_chunks=[]
-            for i in tqdm(
-                range(0, len(keep_slides) - num_concat + 1), desc="Processing slides"
-            ):
-                chunk_slides = keep_slides[i : i + num_concat]
+            if num_concat == -1:
                 
-                chunk_data=merge_slices(chunk_slides,slide_data_map)
-                patient_chunks.append(chunk_data)
+                
+                    chunk_slides = keep_slides
+                    chunk_data=merge_slices(chunk_slides,slide_data_map)
+                    patient_chunks.append(chunk_data)
+            else:
+                for i in range(0, len(keep_slides), num_concat):
+                    chunk_slides = keep_slides[i : i + num_concat]
+                    if len(chunk_slides) < num_concat:
+                        continue
+                    chunk_data = merge_slices(chunk_slides, slide_data_map)
+                    patient_chunks.append(chunk_data)
+
+                
             with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
                 json.dump(patient_chunks, f)
     print("target_root", target_root)
@@ -237,7 +245,6 @@ def save_dsc_data(save_path="desc.json"):
 
 
 def merge_slices(list_slices, slice_data_map):
-
     slice_data = [slice_data_map[s] for s in list_slices]
     output = {}
 
