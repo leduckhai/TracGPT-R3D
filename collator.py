@@ -1,52 +1,97 @@
-pythonsample = {
-    'image': image_tensor,
-    'questions': [
-        {
-            'question': "What color is the car?",
-            'answer': "Red",
-            'answer_type': 'text',
-            'bbox_3d': None
-        },
-        {
-            'question': "What are the 3D coordinates of the car?",
-            'answer': "[2.5, 1.2, 0.8, 4.2, 1.8, 1.5, 0.0, 0.0, 1.57]",  # Serialized bbox
-            'answer_type': 'bbox_3d',
-            'bbox_3d': [2.5, 1.2, 0.8, 4.2, 1.8, 1.5, 0.0, 0.0, 1.57]  # Ground truth
-        },
-        {
-            'question': "Where is the bounding box of the person?",
-            'answer': "<bbox>120,50,200,180</bbox>",  # 2D bbox in special tokens
-            'answer_type': 'bbox_2d',
-            'bbox_2d': [120, 50, 200, 180]
+import torch 
+from torch.utils.data import Dataset
+import torch.nn as nn
+from typing import List
+
+class QA3DDataset(Dataset):
+    def __init__(self, data=None):
+        image_tensor = torch.randn(3, 224, 224)  # Simulated image tensor
+        sample = {
+            'image': image_tensor,
+            'questions': [
+                {
+                    'question': "What color is the car?",
+                    'answer': "Red",
+                    'answer_type': 'text',
+                    'bbox_3d': None
+                },
+                {
+                    'question': "What are the 3D coordinates of the car?",
+                    'answer': "[[2.5, 1.2, 0.8, 4.2, 1.8, 2.3],[2.0, 1.2, 0.8, 4.2, 1.8, 1.5]]", 
+                    'answer_type': 'bbox_3d',
+                    'bbox_3d':[[2.5, 1.2, 0.8, 4.2, 1.8, 2.3],[2.0, 1.2, 0.8, 4.2, 1.8, 1.5]]
+                }
+              
+            ]
         }
-    ]
-}
+
+        flattened_data = []
+        for q in sample['questions']:
+            flattened_data.append({
+                'image': sample['image'],
+                'question': q['question'],
+                'answer': q['answer'],
+                'answer_type': q['answer_type'],
+                'bbox_2d': q.get('bbox_2d'),
+                'bbox_3d': q.get('bbox_3d')
+            })
+
+        self.samples = flattened_data
+        print("length of samples:", len(self.samples))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        item = self.samples[idx]
+        return item 
 
 class BboxAwareCollator:
-    def __init__(self, tokenizer, max_length=512):
+    def __init__(self, tokenizer, max_length=512, max_bbox_length=9):
         self.tokenizer = tokenizer
         self.max_length = max_length
-        
-        # Add special bbox tokens if not already in tokenizer
+        self.max_bbox_length = max_bbox_length
+
         special_tokens = ["<bbox>", "</bbox>", "<x>", "</x>", "<y>", "</y>", "<z>", "</z>"]
         self.tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
-    
-    def format_bbox_answer(self, bbox, answer_type):
+      
+    def pad_bboxes_to_fixed_size(self, bboxes: List[List[float]], target_size: int) -> List[List[float]]:
+        """Pad or truncate bboxes to fixed size"""
+        if len(bboxes) >= target_size:
+            return bboxes[:target_size] 
+        else:
+            padding_bbox = [0.0] * len(bboxes[0]) if bboxes else [0.0] * 6  
+            padded = bboxes + [padding_bbox] * (target_size - len(bboxes))
+            return padded
+        
+    def format_bbox_answer(self, bboxes, answer_type):
         """Convert bbox coordinates to formatted string"""
-        if answer_type == 'bbox_2d':
-            return f"<bbox>{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}</bbox>"
-        elif answer_type == 'bbox_3d':
-            # Format as structured text or JSON-like string
-            return f"[{','.join([f'{x:.2f}' for x in bbox])}]"
-        return None
+        if answer_type == 'bbox_3d':
+            output = []
+            for bbox in bboxes:
+                # Assuming bbox format: [x_min, x_max, y_min, y_max, z_min, z_max]
+                bbox_str = (f"<bbox><x>{bbox[0]:.3f},{bbox[1]:.3f}</x>"
+                           f"<y>{bbox[2]:.3f},{bbox[3]:.3f}</y>"
+                           f"<z>{bbox[4]:.3f},{bbox[5]:.3f}</z></bbox>")
+                output.append(bbox_str)
+            return "".join(output)
+        else:
+            return str(bboxes)
+        
+    def create_bbox_attention_mask(self, length: int, max_len: int) -> List[List[bool]]:
+        """Create attention mask for padded bboxes"""
+        length=max(length,max_len)
+        mask = [True] * length + [False] * (max_len - length)
+        return mask
     
     def __call__(self, batch):
         images = []
         input_ids = []
         attention_masks = []
         labels = []
-        bbox_3d_gt = []  # Ground truth for auxiliary loss
-        bbox_3d_mask = []
+        bbox_gts=[
+        ]
+        bbox_masks=[]
         answer_types = []
         
         for sample in batch:
@@ -57,21 +102,22 @@ class BboxAwareCollator:
             question_text = f"Question: {sample['question']} Answer:"
             
             # Create full text (question + answer for training)
-            if sample['answer_type'] in ['bbox_2d', 'bbox_3d'] and sample.get('bbox_3d') is not None:
-                # Use formatted bbox answer
-                formatted_answer = self.format_bbox_answer(
-                    sample['bbox_3d'] if sample['answer_type'] == 'bbox_3d' else sample.get('bbox_2d'),
-                    sample['answer_type']
-                )
+            if sample['answer_type'] in ['bbox_3d'] and sample.get('bbox_3d') is not None:
+                bbox_data = sample['bbox_3d'] 
+
+                bbox_gt= self.pad_bboxes_to_fixed_size(bbox_data, self.max_bbox_length)  # Pad to fixed size of 2 bboxes
+                
+                bbox_mask=self.create_bbox_attention_mask(len(bbox_data), self.max_bbox_length)
+                
+                formatted_answer = self.format_bbox_answer(bbox_data, sample['answer_type'])
                 full_text = f"Question: {sample['question']} Answer: {formatted_answer}"
-                bbox_3d_gt.append(sample.get('bbox_3d', [0]*9))
-                bbox_3d_mask.append(sample['answer_type'] == 'bbox_3d')
+                
             else:
                 full_text = f"Question: {sample['question']} Answer: {sample['answer']}"
-                bbox_3d_gt.append([0]*9)
-                bbox_3d_mask.append(False)
-            
-            # Tokenize
+                bbox_gt=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
+                bbox_mask=self.create_bbox_attention_mask(0, self.max_bbox_length)
+            bbox_gts.append(bbox_gt)
+            bbox_masks.append(bbox_mask)
             encoded = self.tokenizer(
                 full_text,
                 max_length=self.max_length,
@@ -91,14 +137,18 @@ class BboxAwareCollator:
             label[:question_length] = -100  # Ignore question tokens in loss
             labels.append(label)
         
+        # Create position_ids with correct batch size
+        position_ids = torch.arange(0, self.max_length).expand(len(batch), -1).long()
+        
         return {
             'images': torch.stack(images),
             'input_ids': torch.stack(input_ids),
-            'attention_mask': torch.stack(attention_masks),
+            'attention_masks': torch.stack(attention_masks),
             'labels': torch.stack(labels),
-            'bbox_3d_gt': torch.tensor(bbox_3d_gt, dtype=torch.float32),
-            'bbox_3d_mask': torch.tensor(bbox_3d_mask),
-            'answer_types': answer_types
+            'bbox_gts': torch.stack([torch.tensor(b) for b in bbox_gts]),
+            'bbox_masks': torch.stack([torch.tensor(b) for b in bbox_masks]),
+            'answer_types': answer_types,
+            'position_ids': position_ids   
         }
     
 class MultiModalBboxModel(nn.Module):
@@ -252,3 +302,21 @@ def generate_answer(model, tokenizer, processor, image, question, answer_type):
             }
         
         return {'text': generated_text}
+
+if __name__ == "__main__":
+    from transformers import AutoTokenizer
+    from torch.utils.data import DataLoader
+    ds= QA3DDataset()
+    print("Dataset length:", len(ds))
+    tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    dl= torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=BboxAwareCollator(tokenizer=tokenizer))
+    for batch in dl:
+        images, input_ids, attention_mask, labels, bbox_gt, bbox_mask, answer_types,position_ids = batch.values()
+        print("images shape:", images.shape)
+        print("input_ids shape:", input_ids.shape)
+        print("attention_mask shape:", attention_mask.shape)
+        print("labels shape:", labels.shape)
+        print("bbox_3d_gt shape:", bbox_gt.shape, bbox_gt)
+        print("bbox_3d_mask shape:", bbox_mask.shape)
+        print("answer_types:", answer_types)
+        print("position_ids shape:", position_ids.shape)

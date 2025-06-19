@@ -9,6 +9,7 @@ load_dotenv()
 ROOT=os.getenv("ROOT")
 import sys
 sys.path.append(ROOT)
+import torch.nn.functional as F
 from transformers import AutoConfig, AutoModelForCausalLM, Phi3Config, Phi3Model,PhiModel,PhiConfig,PhiForCausalLM,Phi3ForCausalLM
 
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -57,9 +58,11 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
             images: Optional[torch.FloatTensor] = None,
             input_ids: torch.LongTensor = None,
             labels: Optional[torch.LongTensor] = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            bboxes3d: Optional[torch.FloatTensor] = None,
-
+            attention_masks: Optional[torch.Tensor] = None,
+            bbox_gts: Optional[torch.FloatTensor] = None,
+            bbox_masks: Optional[torch.BoolTensor] = None,
+            answer_types: Optional[torch.LongTensor] = None,
+            
             position_ids: Optional[torch.LongTensor] = None,
             past_key_values: Optional[List[torch.FloatTensor]] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -76,29 +79,27 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
             (
                 input_ids,
                 position_ids,
-                attention_mask,
+                attention_masks,
                 past_key_values,
                 inputs_embeds,
                 labels
             ) = self.prepare_inputs_for_multimodal(
                 input_ids,
                 position_ids,
-                attention_mask,
+                attention_masks,
                 past_key_values,
                 labels,
                 images,
             )
 
-        try:
-            bbox3d_ids = torch.nonzero(torch.sum(bboxes3d, dim=(1, 2))).flatten().tolist()
-        except:
-            bbox3d_ids = []
-
-        if self.get_model().bbox3d_enable and bbox3d_ids:
+      
+        device = input_ids.device if input_ids is not None else inputs_embeds.device
+        bbox_loss = torch.tensor(0.0, dtype=torch.float, device=device, requires_grad=True)
+        if self.get_model().bbox3d_enable and bbox_gts is not None and bbox_masks is not None:
             outputs = super().forward(
                                     input_ids=input_ids,
                                     inputs_embeds=inputs_embeds,
-                                    attention_mask=attention_mask,
+                                    attention_masks=attention_masks,
                                     labels=labels,
                                     output_hidden_states=True,
 
@@ -110,43 +111,82 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
                                 )
 
             output_hidden_states = outputs.hidden_states
-
             last_hidden_state = output_hidden_states[-1]
 
-            bbox3d_token_mask = input_ids_pre[:, 1:] == self.config.bbox3d_token_id
-            bbox3d_token_mask = torch.cat(
-                [
-                    bbox3d_token_mask,
-                    torch.zeros((bbox3d_token_mask.shape[0], 1), dtype=bbox3d_token_mask.dtype).cuda(),
-                ],
-                dim=1,
-            )
-
-            bbox3d_prompts = []
-            for i in bbox3d_ids:
-                if torch.sum(bbox3d_token_mask[i]) == 1:
-                    bbox3d_token = last_hidden_state[i][bbox3d_token_mask[i]]
-                    bbox3d_prompt = self.get_model().bbox3d_projector(bbox3d_token)
-                elif torch.sum(bbox3d_token_mask[i]) > 1:
-                    bbox3d_tokens = last_hidden_state[i][bbox3d_token_mask[i]]
-                    bbox3d_token = torch.mean(bbox3d_tokens, dim=0, keepdim=True)
-                    bbox3d_prompt = self.get_model().bbox3d_projector(bbox3d_token)
-                else:
-                    bbox3d_prompt = torch.zeros([1, self.config.mm_hidden_size], dtype=last_hidden_state.dtype,
-                                             device=last_hidden_state.device)
-                bbox3d_prompts.append(bbox3d_prompt)
-
-            bbox3d_prompts = torch.cat(bbox3d_prompts, dim=0)
-            logits = self.get_model().bbox3d_module(images[bbox3d_ids], text_emb=bbox3d_prompts)
-            loss_l1 = self.get_model().l1_loss(logits, bboxes3d[bbox3d_ids])
-            loss_iou3d = self.get_model().iou3d_loss(logits, bboxes3d[bbox3d_ids])
-            bbox3d_loss = loss_l1 + loss_iou3d
-            outputs.loss = outputs.loss + bbox3d_loss
-            return outputs
+            # Check if there are any valid bbox samples
+            if bbox_masks is not None and bbox_masks.any():
+                # Find samples that have at least one valid bbox
+                bbox_samples = bbox_masks.any(dim=1)  # [B] - which samples have bboxes
+                
+                if bbox_samples.any():  # Only proceed if there are bbox samples
+                    # Extract features for bbox samples only
+                    bbox_vision_features = vision_features[bbox_samples]  # [B_masked, L, D_v]
+                    bbox_last_hidden = last_hidden_state[bbox_samples]    # [B_masked, seq_len, hidden_dim]
+                    bbox_targets = bbox_gts[bbox_samples]                 # [B_masked, max_bbox_len, 6]
+                    bbox_attention_mask = bbox_masks[bbox_samples] if bbox_masks is not None else None
+                    
+                    # Pool features
+                    # For vision features: average over bbox sequence length
+                    vision_feat_pooled = bbox_vision_features.mean(dim=1)  # [B_masked, D_v]
+                    
+                    # For text features: average over sequence length
+                    text_feat_pooled = bbox_last_hidden.mean(dim=1)       # [B_masked, hidden_dim]
+                    
+                    # Combine features
+                    combined_features = torch.cat([vision_feat_pooled, text_feat_pooled], dim=-1)
+                    
+                    # Predict bboxes
+                    bbox_pred = self.bbox_3d_head(combined_features)  # Output shape depends on head design
+                    
+                    # Handle different bbox prediction formats
+                    if bbox_pred.dim() == 2 and bbox_targets.dim() == 3:
+                        # If prediction is [B_masked, 6] but targets are [B_masked, max_bbox_len, 6]
+                        # We need to handle multiple bboxes per sample
+                        if bbox_attention_mask is not None:
+                            # Use attention mask to compute loss only on valid bboxes
+                            valid_mask = bbox_attention_mask[bbox_samples]  # [B_masked, max_bbox_len]
+                            
+                            # Expand predictions to match target shape
+                            bbox_pred_expanded = bbox_pred.unsqueeze(1).expand(-1, bbox_targets.size(1), -1)
+                            
+                            # Compute loss only on valid bboxes
+                            bbox_loss_full = F.smooth_l1_loss(bbox_pred_expanded, bbox_targets, reduction='none')
+                            bbox_loss_masked = bbox_loss_full * valid_mask.unsqueeze(-1).float()
+                            bbox_loss = bbox_loss_masked.sum() / valid_mask.sum().clamp(min=1)
+                        else:
+                            # If no attention mask, assume first bbox is the target
+                            bbox_loss = F.smooth_l1_loss(bbox_pred, bbox_targets[:, 0, :])
+                            
+                    elif bbox_pred.dim() == 3 and bbox_targets.dim() == 3:
+                        # Both are [B_masked, max_bbox_len, 6]
+                        if bbox_attention_mask is not None:
+                            valid_mask = bbox_attention_mask[bbox_samples]  # [B_masked, max_bbox_len]
+                            bbox_loss_full = F.smooth_l1_loss(bbox_pred, bbox_targets, reduction='none')
+                            bbox_loss_masked = bbox_loss_full * valid_mask.unsqueeze(-1).float()
+                            bbox_loss = bbox_loss_masked.sum() / valid_mask.sum().clamp(min=1)
+                        else:
+                            bbox_loss = F.smooth_l1_loss(bbox_pred, bbox_targets)
+                            
+                    elif bbox_pred.dim() == 2 and bbox_targets.dim() == 2:
+                        # Both are [B_masked, 6] - single bbox per sample
+                        bbox_loss = F.smooth_l1_loss(bbox_pred, bbox_targets)
+                    
+                    else:
+                        raise ValueError(f"Incompatible shapes: bbox_pred {bbox_pred.shape}, bbox_targets {bbox_targets.shape}")
+                    
+                    # Store predictions and loss in outputs
+                    if hasattr(outputs, '__dict__'):
+                        outputs.bbox_3d_loss = bbox_loss
+                        outputs.bbox_3d_pred = bbox_pred
+                    elif isinstance(outputs, dict):
+                        outputs['bbox_3d_loss'] = bbox_loss
+                        outputs['bbox_3d_pred'] = bbox_pred
+                    return outputs
+        
         else:
             return super().forward(
                 input_ids=input_ids,
-                attention_mask=attention_mask,
+                attention_masks=attention_masks,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 inputs_embeds=inputs_embeds,
@@ -167,7 +207,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor, Any]:
         position_ids = kwargs.pop("position_ids", None)
-        attention_mask = kwargs.pop("attention_mask", None)
+        attention_masks = kwargs.pop("attention_masks", None)
         if "inputs_embeds" in kwargs:
             raise NotImplementedError("`inputs_embeds` is not supported")
 
@@ -175,14 +215,14 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
             (
                 inputs,
                 position_ids,
-                attention_mask,
+                attention_masks,
                 _,
                 inputs_embeds,
                 _
             ) = self.prepare_inputs_for_multimodal(
                 inputs,
                 position_ids,
-                attention_mask,
+                attention_masks,
                 None,
                 None,
                 images,
@@ -249,60 +289,50 @@ AutoConfig.register("trac-phi3", TracPhi3Config)
 AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 
 if __name__=="__main__":
-    model= TracPhi3ForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct", config=TracPhi3Config())
-    # from transformers import AutoTokenizer
-    # tokenizer = AutoTokenizer.from_pretrained("microsoft/phi-2")
-    # config = AutoConfig.from_pretrained("microsoft/phi-2", model_type="trac-phi2")
-    # config.bbox3d_enable = True 
-    # config.mm_hidden_size = 512  
-    # config.bbox3d_token_id = 50295  
-    # config.vision_tower="vit3d"
-
-    # model = TracPhiForCausalLM.from_pretrained("microsoft/phi-2", config=config)
-    # model.get_model().to('cuda')  
-
-
-    # # Example inputs
-    # batch_size = 2
-    # seq_length = 32
-    # vocab_size = config.vocab_size
-
-    # input_ids = torch.randint(0, vocab_size, (batch_size, seq_length)).to('cuda')
-    # attention_mask = torch.ones((batch_size, seq_length)).to('cuda')
-    # position_ids = torch.arange(seq_length).expand(batch_size, -1).to('cuda')
-    # images = torch.randn((batch_size, 3, 224, 224)).to('cuda')
-    # bboxes3d = torch.randn((batch_size, 8, 3)).to('cuda')
-    # # Text-only generation
-    # # generated_ids = model.generate(
-    # #     inputs=input_ids,
-    # #     attention_mask=attention_mask,
-    # #     max_length=50
-    # # )
-
-    # # Multimodal generation with bbox
-    # generated_ids, bbox_logits = model.generate(
-    #     inputs=input_ids,
-    #     attention_mask=attention_mask,
-    #     position_ids=position_ids,
-    #     images=images,
-    #     bbox3d_enable=True,
-    #     max_length=50
-    # )
-
-    # # Print results
-    # print("=== TEXT-ONLY GENERATION ===")
-    # print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
-
-    # print("\n=== MULTIMODAL GENERATION ===")
-    # print("Generated Text:")
-    # print(tokenizer.decode(generated_ids[0], skip_special_tokens=True))
-
-    # print("\n3D Bounding Box Predictions:")
-    # for i, bbox in enumerate(bbox_logits):
-    #     print(f"\nObject {i+1}:")
-    #     # Format the bbox coordinates nicely
-    #     corners = bbox.cpu().detach().numpy()
-    #     for j, corner in enumerate(corners):
-    #         print(f"Corner {j+1}: x={corner[0]:.2f}, y={corner[1]:.2f}, z={corner[2]:.2f}")
+    from collator import QA3DDataset,BboxAwareCollator
+    from torch.utils.data import DataLoader
+    from transformers import AutoTokenizer
     
+    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    model= TracPhi3ForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    model.get_model().to('cuda')
 
+    max_length=512
+    collator= BboxAwareCollator(tokenizer=tokenizer)
+    ds= QA3DDataset()
+    dl=DataLoader(ds, batch_size=2, shuffle=True, collate_fn=BboxAwareCollator(tokenizer=tokenizer,max_length=max_length))
+
+    for batch in dl:
+
+        images= batch['images'].to('cuda')
+        input_ids= batch['input_ids'].to('cuda')
+        attention_masks = batch['attention_masks'].to('cuda')
+        labels= batch['labels'].to('cuda')
+        bbox_gts = batch['bbox_3d_gt'].to('cuda')
+        bboxe_masks = batch['bbox_3d_mask'].to('cuda')
+        answer_types = batch['answer_types'].to('cuda')
+        position_ids = batch['position_ids'].to('cuda')
+        
+
+        with torch.no_grad():
+
+            generated_ids, bbox_logits = model.generate(
+                inputs=input_ids,
+                attention_masks=attention_masks,
+                position_ids=position_ids,
+                images=images,
+                bbox3d_enable=True,
+                max_length=50
+            )
+
+            print("Generated Text:", tokenizer.decode(generated_ids[0], skip_special_tokens=True))
+            print("3D Bounding Box Predictions:", bbox_logits)
+
+        model.forward(
+            input_ids=input_ids,
+            attention_masks=attention_masks,
+            position_ids=position_ids,
+            images=images,
+            bboxes3d=bboxes3d
+        )
+    

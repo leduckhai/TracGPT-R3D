@@ -312,3 +312,6 @@ if __name__=="__main__":
         corners = bbox.cpu().detach().numpy()
         for j, corner in enumerate(corners):
             print(f"Corner {j+1}: x={corner[0]:.2f}, y={corner[1]:.2f}, z={corner[2]:.2f}")
+
+if __name__ == "__main__":
+    
