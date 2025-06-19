@@ -203,7 +203,13 @@ def merge_A1_data(list_A1):
     for bboxes_ls in list_A1:
         parsed = ast.literal_eval(bboxes_ls)
         bbox_input.append(parsed)
-    output = group_and_merge_3d_bboxes_v2(bbox_input)
+    # if num_concat == -1:
+    #     num_concat = len(bbox_input)
+    if num_concat!=-1:
+        param_num_concat = num_concat
+    else:
+        param_num_concat = len(bbox_input)
+    output = group_and_merge_3d_bboxes_v2(bboxes_slice=bbox_input,num_concat=param_num_concat)
     return output
 
 

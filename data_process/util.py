@@ -49,61 +49,54 @@ def calculate_2d_iou_of_multiple_boxes(boxes1, boxes2):
         ious.append(max_iou)
     return np.array(ious).mean()
 
-def group_and_merge_3d_bboxes_v2(bboxes_slice,num_concat=50, 
-                             img_size=None, eps=None, max_objects_k=None,
-                             overlap_threshold=0.8, discard_inner_iou=0.9,min_slices=2,continuity_threshold=0.7):
-    
-    
+def group_and_merge_3d_bboxes_v2(bboxes_slice, num_concat=50, 
+                                 img_size=None, eps=None, max_objects_k=None,
+                                 overlap_threshold=0.8, discard_inner_iou=0.9,
+                                 min_slices=2, continuity_threshold=0.7):
+
     if not bboxes_slice:
         return []
-    
-    if not img_size:
-        width, height = 1, 1
-    else:
-        width, height = img_size
-    
+
+    width, height = img_size if img_size else (1, 1)
+
     # Group slice indices with similar boxes
     slice_groups = []
-    
+
     for i, current_boxes in enumerate(bboxes_slice):
-        if not current_boxes:  # Skip empty slices
+        if not current_boxes:
             continue
-            
+
         matched = False
-        
-        # Try to match with existing groups
+
         for group in slice_groups:
-            # Compare with the most recent slice in the group for better continuity
             reference_slice_idx = group[-1]
             reference_boxes = bboxes_slice[reference_slice_idx]
-            
+
             if calculate_2d_iou_of_multiple_boxes(current_boxes, reference_boxes) > overlap_threshold:
                 group.append(i)
                 matched = True
                 break
-        
+
         if not matched:
             slice_groups.append([i])
-    
+
     output = []
     for group_indices in slice_groups:
         if len(group_indices) < min_slices:
             continue
-        
-        # Calculate z-coordinates (normalized)
-        z_min = float() / num_concat
-        z_max = float(max(group_indices)) / num_concat
-        group_continuity_threshold= len(group_indices)/(max(group_indices)- min(group_indices)) 
-        if group_continuity_threshold< continuity_threshold:
-            print("skip non_continuity_threshold",group_continuity_threshold)
+
+        z_min = min(group_indices) / num_concat
+        z_max = max(group_indices) / num_concat
+
+        group_continuity = len(group_indices) / (max(group_indices) - min(group_indices) + 1)
+        if group_continuity < continuity_threshold:
+            print("skip non_continuous group", group_continuity)
             continue
 
         for bbox in bboxes_slice[group_indices[0]]:
-
             x_min, y_min, x_max, y_max = bbox
-        
             output.append([x_min, y_min, z_min, x_max, y_max, z_max])
-    
+
     return output
   
 def bboxes_overlap_2d(bbox1, bbox2):
@@ -408,8 +401,6 @@ def convert_list_slice_paths_to_3d(list_slice_paths):
         else:
             raise NotImplementedError
     return np.stack(slice_stack, axis=0)
-        # convert_slice_path_to_3d(slice_path)
-    # return [convert_slice_path_to_3d(slice_path) for slice_path in list_slice_paths]
 
 def show_rgb_slices(data, num_slices=5, figsize=(15, 5), normalize=True, save_path=None, show=True):
     """

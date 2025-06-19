@@ -10,3 +10,4 @@ test_gt_50.nii.gz
 VLMTrac
 
 .env
+**/*.gz
