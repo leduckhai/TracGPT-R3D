@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
+from types import SimpleNamespace
 
 class IdentityMap(nn.Module):
     def __init__(self):
@@ -82,29 +83,39 @@ class FullLinear(nn.Module):
         return num
 
 
-def build_mm_projector(config, delay_load=False, **kwargs):
-    projector_type = getattr(config, 'mm_projector_type')
-    print(" build projector",projector_type)
-    if projector_type == 'linear':
+def build_mm_projector(mm_projector_type='spp'):
+    config={
+        "mm_projector_type": mm_projector_type,
+        "image_size": [32, 256, 256],
+        "patch_size": [4, 16, 16],
+        "in_dim": 2560,
+        "out_dim":758,
+        "layer_type": 'mlp',
+        "layer_num": 2,
+        "pooling_type": 'spatial',
+        "pooling_size": 2,
+     
+    }
+    config=SimpleNamespace(**config)
+    if config.mm_projector_type == 'linear':
         return FullLinear(config)
     # ([2, 2048, 768])
     # in_dim=config.mm_hidden_size= 512
-    #
-    elif projector_type == 'spp':
+    elif config.mm_projector_type    == 'spp':
         return SpatialPoolingProjector(image_size=config.image_size,
                                         patch_size=config.patch_size,
-                                        in_dim=config.mm_hidden_size,
-                                        out_dim=config.hidden_size,
-                                        layer_type=config.proj_layer_type,
-                                        layer_num=config.proj_layer_num,
-                                        pooling_type=config.proj_pooling_type,
-                                        pooling_size=config.proj_pooling_size)
+                                        in_dim=config.in_dim,
+                                        out_dim=config.out_dim,
+                                        layer_type=config.layer_type,
+                                        layer_num=config.layer_num,
+                                        pooling_type=config.pooling_type,
+                                        pooling_size=config.pooling_size)
 
 
-    elif projector_type == 'identity':
+    elif config.mm_projector_type == 'identity':
         return IdentityMap()
     else:
-        raise ValueError(f'Unknown projector type: {projector_type}')
+        raise ValueError(f'Unknown projector type: {config.mm_projector_type}')
 
 
 
@@ -137,9 +148,7 @@ class SpatialPoolingProjector(nn.Module):
         self.pooling_type = pooling_type
 
     def forward(self, x):
-        print("x shape",x.shape)
         B = x.shape[0] # B*N*D
-        print("self.num_patches_pre",self.num_patches_pre)
         if self.pooling_type == 'spatial':
             to_3d = Rearrange("b (p1 p2 p3) d -> b d p1 p2 p3", b=B, d=self.in_dim, p1=self.num_patches_pre[0], p2=self.num_patches_pre[1], p3=self.num_patches_pre[2])
             x = to_3d(x)
@@ -163,3 +172,12 @@ class SpatialPoolingProjector(nn.Module):
         for n in self.num_patches_post:
             num *= n
         return num
+
+if __name__ == "__main__":
+    import torch
+    # config = SimpleNamespace(mm_hidden_size=2560, hidden_size=758)
+
+    projector = build_mm_projector('spp')
+    x = torch.randn(2, 2048, 2560)  # Example input
+    output = projector(x)
+    print("Output shape:", output.shape)  # Should be [2, 2048, 758] if spp is used

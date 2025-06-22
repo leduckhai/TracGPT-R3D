@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from types import SimpleNamespace
 
-
-def build_bbox3d_module(config):
+def build_bbox3d_module():
     """
     Build the 3D Bounding Box prediction module based on configuration
     Args:
@@ -11,17 +11,8 @@ def build_bbox3d_module(config):
     Returns:
         BBox3DHead instance
     """
-    kwargs = {
-        "input_dim": getattr(config, "input_dim", 256),
-        "hidden_dim": getattr(config, "hidden_dim", 512),
-        "num_classes": getattr(config, "num_classes", None),
-        "max_bbox_len": getattr(config, "max_bbox_len", None),
-        "normalize_coords": getattr(config, "normalize_coords", None),
-        "coord_bounds": getattr(config, "coord_bounds", None),
-    }
-
-    filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    return BBox3DHead(**filtered_kwargs)
+ 
+    return BBox3DHead()
 
 
 class BBox3DHead(nn.Module):
@@ -29,7 +20,7 @@ class BBox3DHead(nn.Module):
 
     def __init__(
         self,
-        input_dim: int,
+        input_dim: int=512,
         hidden_dim: int = 512,
         num_classes: int = 1,
         max_bbox_len: int = 9,

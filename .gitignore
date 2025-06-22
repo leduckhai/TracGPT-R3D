@@ -11,3 +11,5 @@ VLMTrac
 
 .env
 **/*.gz
+
+output

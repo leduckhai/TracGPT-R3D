@@ -51,8 +51,8 @@ def create_model_args():
     args.pretrain_vision_model = None
     args.freeze_vision_tower = False
     args.num_new_tokens = 4
-    args.hidden_size=768  
-    args.num_heads = 12  # Number of attention heads, can be adjusted based on model size
+    args.vision_hidden_size=768  
+    args.vision_num_heads = 12 
 
     # projector
     args.mm_projector_type = "spp"
@@ -67,7 +67,7 @@ def create_model_args():
 
     # bbox3d
     args.bbox3d_module = "simple"  # Enable bbox3d module
-    args.hidden_size = 1024
+    args.bbox_hidden_size = 1024
     args.num_classes = 1
     args.max_bbox_length = 9
     args.mm_hidden_size = 2560
@@ -201,22 +201,22 @@ def create_trac_phi3_config(model_args):
     """Create TracPhi3Config from model arguments"""
     # Start with base Phi3 config
     base_config = {
-        'hidden_size': model_args.hidden_size,
-        'intermediate_size': model_args.hidden_size * 4,
-        'num_attention_heads': 32,
-        'num_hidden_layers': 32,
-        'num_key_value_heads': 32,
-        'vocab_size': model_args.vocab_size,
-        'max_position_embeddings': 4096,
-        'rms_norm_eps': 1e-5,
-        'rope_theta': 10000.0,
-        'sliding_window': None,
-        'attention_dropout': 0.0,
-        'return_dict': True,
-        'output_hidden_states': False,
-        'output_attentions': False,
-        'torch_dtype': 'float16',
-        'use_cache': True,
+        # 'hidden_size': model_args.hidden_size,
+        # 'intermediate_size': model_args.hidden_size * 4,
+        # 'num_attention_heads': 32,
+        # 'num_hidden_layers': 32,
+        # 'num_key_value_heads': 32,
+        # 'vocab_size': model_args.vocab_size,
+        # 'max_position_embeddings': 4096,
+        # 'rms_norm_eps': 1e-5,
+        # 'rope_theta': 10000.0,
+        # 'sliding_window': None,
+        # 'attention_dropout': 0.0,
+        # 'return_dict': True,
+        # 'output_hidden_states': False,
+        # 'output_attentions': False,
+        # 'torch_dtype': 'float16',
+        # 'use_cache': True,
     }
     
     # Add multimodal configuration
@@ -238,10 +238,12 @@ def create_trac_phi3_config(model_args):
         'proj_pooling_size': model_args.proj_pooling_size,
 
         # vision config 
-        'hidden_size':model_args.hidden_size,
-        'nums_heads': model_args.num_heads,
+        'vision_hidden_size':model_args.vision_hidden_size,
+        'vision_nums_heads': model_args.vision_num_heads,
+        
     }
     
+    print("multimodal_config: here", multimodal_config)
     # Combine all configurations
     config_dict = {**base_config, **multimodal_config}
     return TracPhi3Config(**config_dict)
@@ -606,7 +608,6 @@ def main():
                 ),
             )
             
-            # Load compatible weights
             model_dict = model.state_dict()
             pretrained_dict = base_model.state_dict()
             

@@ -88,6 +88,7 @@ class MultimodalProcessor(nn.Module):
         image_features = self.vision_encoder.encode_images(images)
         print("image features shape:", image_features.shape)
         if image_features is None:
+            print("image features is None here ")
             return self._prepare_text_only_inputs(
                 input_ids, position_ids, attention_mask,
                 past_key_values, labels, embed_tokens_fn
@@ -189,7 +190,8 @@ class MultimodalProcessor(nn.Module):
             ).unsqueeze(0).expand(batch_size, -1)
         else:
             final_position_ids = None
-        
+        if images is  None:  # Add image features to the end of the sequencem
+            print("image feature is None there")
         return (
             final_input_ids, final_position_ids, final_attention_mask,
             past_key_values, final_embeds, final_labels, image_features

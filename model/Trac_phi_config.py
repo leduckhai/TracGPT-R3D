@@ -25,28 +25,9 @@ import json
 class MultimodalConfig:
     """Configuration for multimodal components"""
 
-    vision_tower: Optional[str] = None
-    mm_projector_type: Optional[str] = None
-    bbox3d_module: Optional[str] = None
-    mm_hidden_size: int = 2560
+    vision_tower: Optional[str] = "vit3d"
     bbox3d_token_id: Optional[int] = None
-    image_channel: int = 3
-    image_size: int = 224
-    patch_size: int = 16
-    # Vision config
-    vision_select_layer: int = -1
-    vision_select_feature: str = "patch"
-
-    # VIT config
-    hidden_size: int = 768
-    num_heads: int = 12
-
-
-    # Projector config
-    proj_layer_type: str = "linear"
-    proj_layer_num: int = 2
-    proj_pooling_type: str = "avg"
-    proj_pooling_size: int = 2
+    
     # bbox config
     img_token_id: Optional[int] = None
 
@@ -68,25 +49,8 @@ class TracPhi3Config(Phi3Config):
     def __init__(self, **kwargs):
         self.multimodal_keys = [
             "vision_tower",
-            "mm_projector_type",
-            "bbox3d_module",
-            "mm_hidden_size",
             "bbox3d_token_id",
-            "image_channel",
-            "image_size",
-            "patch_size",
-
-            "vision_select_layer",
-            "vision_select_feature",
-
-            "hidden_size",
-            "num_heads",
             # Projector specific
-
-            "proj_layer_type",
-            "proj_layer_num",
-            "proj_pooling_type",
-            "proj_pooling_size",
 
             "img_token_id",
         ]

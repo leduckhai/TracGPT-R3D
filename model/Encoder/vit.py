@@ -39,7 +39,7 @@ class ViT(nn.Module):
         num_layers: int = 12,
         num_heads: int = 12,
         classification: bool = False,
-        num_classes: int = 2,
+        num_classes: int = 1,
         dropout_rate: float = 0.0,
         spatial_dims: int = 3,
         post_activation="Tanh",
@@ -48,7 +48,7 @@ class ViT(nn.Module):
     ) -> None:
         """
         Args:
-            in_channels (int): dimension of input channels.
+            img_channels (int): dimension of input channels.
             img_size (Union[Sequence[int], int]): dimension of input image.
             patch_size (Union[Sequence[int], int]): dimension of patch size.
             hidden_size (int, optional): dimension of hidden layer. Defaults to 768.
@@ -69,13 +69,13 @@ class ViT(nn.Module):
         Examples::
 
             # for single channel input with image size of (96,96,96), conv position embedding and segmentation backbone
-            # >>> net = ViT(in_channels=1, img_size=(96,96,96), pos_embed='conv')
+            # >>> net = ViT(img_channels=1, img_size=(96,96,96), pos_embed='conv')
 
             # for 3-channel with image size of (128,128,128), 24 layers and classification backbone
-            # >>> net = ViT(in_channels=3, img_size=(128,128,128), pos_embed='conv', classification=True)
+            # >>> net = ViT(img_channels=3, img_size=(128,128,128), pos_embed='conv', classification=True)
 
             # for 3-channel with image size of (224,224), 12 layers and classification backbone
-            # >>> net = ViT(in_channels=3, img_size=(224,224), pos_embed='conv', classification=True, spatial_dims=2)
+            # >>> net = ViT(img_channels=3, img_size=(224,224), pos_embed='conv', classification=True, spatial_dims=2)
 
         """
 
@@ -129,26 +129,31 @@ class ViT(nn.Module):
 
 
 class ViT3DTower(nn.Module):
-    def __init__(self, config):
+    def __init__(
+        self,
+        in_channels=1,
+        img_size=(32, 256, 256),
+        patch_size=(4, 16, 16),
+        hidden_size=768,
+        num_heads=12,
+        vision_select_layer=-1,
+        vision_select_feature="cls_patch",
+    ):
         super().__init__()
-        self.config = config
-        self.select_layer = config.vision_select_layer
-        self.select_feature = config.vision_select_feature
-        keys = ["image_channel", "image_size", "patch_size", "hidden_size", "num_heads"]
-        for key in keys:
-            if not hasattr(self.config, key):
-                raise ValueError(
-                    f"Config is missing required key: {key} to init VIT3DTower"
-                )
-        self.vision_tower = ViT(
-            in_channels=self.config.image_channel,
-            img_size=self.config.image_size,
-            patch_size=self.config.patch_size,
-            hidden_size=self.config.hidden_size,
-            spatial_dims=len(self.config.patch_size),
-            classification=True,
-            num_heads=self.config.num_heads,
-        )
+        self.select_layer = vision_select_layer
+        self.select_feature = vision_select_feature
+
+        vit_kwargs = {
+            "in_channels": in_channels,
+            "img_size": img_size,
+            "patch_size": patch_size,
+            "hidden_size": hidden_size,
+            "num_heads": num_heads,
+        }
+
+        vit_kwargs = {k: v for k, v in vit_kwargs.items() if v is not None}
+
+        self.vision_tower = ViT(**vit_kwargs)
 
     def forward(self, images):
         last_feature, hidden_states = self.vision_tower(images)
@@ -183,12 +188,12 @@ class ViT3DTower(nn.Module):
 
 if __name__ == "__main__":
     image_channel = 1
-    image_size = (32, 256, 256)
+    img_size = (32, 256, 256)
     patch_size = (4, 16, 16)
     batch_size = 1
     args = type("", (), {})()
     args.image_channel = image_channel
-    args.image_size = image_size
+    args.img_size = img_size
     args.patch_size = patch_size
     args.vision_select_layer = -1
     args.vision_select_feature = "cls_patch"
@@ -201,7 +206,7 @@ if __name__ == "__main__":
     args.proj_pooling_size = 2
     args.num_heads = 8
 
-    img = torch.randn((batch_size, 1, *image_size)).to("cuda")
+    img = torch.randn((batch_size, 1, *img_size)).to("cuda")
     model = ViT3DTower(args)
     model = model.to("cuda")
     output = model(img)
