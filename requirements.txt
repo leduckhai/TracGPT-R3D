@@ -12,3 +12,7 @@ transformers
 monai
 einops
 python-dotenv
+accelerate
+protobuf
+hf_transfer
+tensorboardX

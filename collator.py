@@ -5,7 +5,7 @@ from typing import List
 
 class QA3DDataset(Dataset):
     def __init__(self, data=None):
-        image_tensor = torch.randn(3, 224, 224)  # Simulated image tensor
+        image_tensor = torch.randn(1,32, 256, 256)  # Simulated image tensor
         sample = {
             'image': image_tensor,
             'questions': [

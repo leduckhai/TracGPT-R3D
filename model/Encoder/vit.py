@@ -1,4 +1,3 @@
-
 # Copyright (c) MONAI Consortium
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +11,7 @@
 
 from __future__ import annotations
 
-from transformers import ViTModel,ViTConfig
+from transformers import ViTModel, ViTConfig
 from collections.abc import Sequence
 
 import torch
@@ -20,6 +19,7 @@ import torch.nn as nn
 
 from monai.networks.blocks.patchembedding import PatchEmbeddingBlock
 from monai.networks.blocks.transformerblock import TransformerBlock
+
 
 class ViT(nn.Module):
     """
@@ -38,7 +38,6 @@ class ViT(nn.Module):
         mlp_dim: int = 3072,
         num_layers: int = 12,
         num_heads: int = 12,
-        # pos_embed: str = "conv",
         classification: bool = False,
         num_classes: int = 2,
         dropout_rate: float = 0.0,
@@ -95,13 +94,14 @@ class ViT(nn.Module):
             patch_size=patch_size,
             hidden_size=hidden_size,
             num_heads=num_heads,
-            # # pos_embed=pos_embed,
             dropout_rate=dropout_rate,
             spatial_dims=spatial_dims,
         )
         self.blocks = nn.ModuleList(
             [
-                TransformerBlock(hidden_size, mlp_dim, num_heads, dropout_rate, qkv_bias, save_attn)
+                TransformerBlock(
+                    hidden_size, mlp_dim, num_heads, dropout_rate, qkv_bias, save_attn
+                )
                 for i in range(num_layers)
             ]
         )
@@ -128,44 +128,43 @@ class ViT(nn.Module):
         return x, hidden_states_out
 
 
-
-
-
 class ViT3DTower(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.select_layer = config.vision_select_layer
         self.select_feature = config.vision_select_feature
-        
+        keys = ["image_channel", "image_size", "patch_size", "hidden_size", "num_heads"]
+        for key in keys:
+            if not hasattr(self.config, key):
+                raise ValueError(
+                    f"Config is missing required key: {key} to init VIT3DTower"
+                )
         self.vision_tower = ViT(
             in_channels=self.config.image_channel,
             img_size=self.config.image_size,
             patch_size=self.config.patch_size,
             hidden_size=self.config.hidden_size,
-            # pos_embed="perceptron",
             spatial_dims=len(self.config.patch_size),
             classification=True,
-            num_heads= self.config.num_heads,
+            num_heads=self.config.num_heads,
         )
 
     def forward(self, images):
         last_feature, hidden_states = self.vision_tower(images)
-        # print("last_feature shape:", last_feature.shape)
-        # print("hidden_states shape:", [hs.shape for hs in hidden_states])
         if self.select_layer == -1:
             image_features = last_feature
         elif self.select_layer < -1:
             image_features = hidden_states[self.select_feature]
         else:
-            raise ValueError(f'Unexpected select layer: {self.select_layer}')
+            raise ValueError(f"Unexpected select layer: {self.select_layer}")
 
-        if self.select_feature == 'patch':
+        if self.select_feature == "patch":
             image_features = image_features[:, 1:]
-        elif self.select_feature == 'cls_patch':
+        elif self.select_feature == "cls_patch":
             image_features = image_features
         else:
-            raise ValueError(f'Unexpected select feature: {self.select_feature}')
+            raise ValueError(f"Unexpected select feature: {self.select_feature}")
 
         return image_features
 
@@ -181,28 +180,29 @@ class ViT3DTower(nn.Module):
     def hidden_size(self):
         return self.vision_tower.hidden_size
 
-if __name__=="__main__":
-    image_channel=1
-    image_size=(32, 256, 256)
-    patch_size=(4, 16, 16)
-    batch_size=1
-    args = type('', (), {})() 
+
+if __name__ == "__main__":
+    image_channel = 1
+    image_size = (32, 256, 256)
+    patch_size = (4, 16, 16)
+    batch_size = 1
+    args = type("", (), {})()
     args.image_channel = image_channel
     args.image_size = image_size
     args.patch_size = patch_size
     args.vision_select_layer = -1
-    args.vision_select_feature = 'cls_patch'
+    args.vision_select_feature = "cls_patch"
     args.hidden_size = 512
-    args.vision_tower = 'vit3d'
-    args.mm_projector_type = 'spp'
-    args.proj_layer_type = 'linear'
+    args.vision_tower = "vit3d"
+    args.mm_projector_type = "spp"
+    args.proj_layer_type = "linear"
     args.proj_layer_num = 2
-    args.proj_pooling_type = 'spatial'
+    args.proj_pooling_type = "spatial"
     args.proj_pooling_size = 2
-    args.num_heads=8
+    args.num_heads = 8
 
-    img=torch.randn((batch_size, 1, *image_size)).to('cuda')
-    model= ViT3DTower(args)
-    model=model.to('cuda')
+    img = torch.randn((batch_size, 1, *image_size)).to("cuda")
+    model = ViT3DTower(args)
+    model = model.to("cuda")
     output = model(img)
     print("Output shape:", output.shape)

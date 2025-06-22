@@ -1,0 +1,55 @@
+TracPhi3Config
+Purpose: Configuration class that defines all the parameters and settings for the model.
+Key Features:
+
+Inherits from Phi3Config (base Phi3 configuration)
+Adds multimodal capabilities through MultimodalConfig
+Stores all hyperparameters like vision tower settings, projector types, bbox3d module settings
+Acts as a blueprint that other classes use to initialize themselves
+
+What it contains:
+python# Extracts multimodal-specific parameters like:
+- vision_tower, mm_projector_type, bbox3d_module
+- mm_hidden_size, image_size, patch_size
+- vision_select_layer, proj_layer_type, etc.
+TracPhi3Model
+Purpose: The core model architecture that handles the actual neural network computations.
+Key Features:
+
+Inherits from Phi3Model (base transformer model)
+Contains the multimodal components (vision encoder, bbox predictor)
+Handles the forward pass computations
+Manages multimodal input processing
+
+What it contains:
+python- vision_encoder: VisionEncoder          # Processes images
+- bbox3d_predictor: BBox3DPredictor     # Predicts 3D bounding boxes  
+- multimodal_processor: MultimodalProcessor  # Handles mixed inputs
+TracPhi3ForCausalLM
+Purpose: The complete model wrapper for causal language modeling tasks (text generation).
+Key Features:
+
+Inherits from Phi3ForCausalLM (causal LM wrapper)
+Contains a TracPhi3Model instance
+Adds the language modeling head (lm_head) for text generation
+Implements training logic (forward pass with loss computation)
+Implements generation logic (inference/text generation)
+
+What it contains:
+python- model: TracPhi3Model              # The core model
+- lm_head: nn.Linear               # Output projection for vocabulary
+- Forward pass with bbox loss computation
+- Generate method for inference
+Hierarchy Summary
+TracPhi3Config
+    ↓ (configures)
+TracPhi3Model (core computations)
+    ↓ (wrapped by)  
+TracPhi3ForCausalLM (complete training/inference interface)
+In simple terms:
+
+Config: "What settings should the model use?"
+Model: "How does the model process data?"
+ForCausalLM: "How do we train and generate text with this model?"
+
+The ForCausalLM class is what you'd typically use for training and inference, while the base Model class focuses purely on the forward computations.

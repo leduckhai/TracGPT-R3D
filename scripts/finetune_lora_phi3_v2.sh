@@ -1,19 +1,20 @@
 #!/bin/bash
 
-# export WORLD_SIZE=1
-# export RANK=0
-# export LOCAL_RANK=0
+export WORLD_SIZE=1
+export RANK=0
+export LOCAL_RANK=0
+export HF_HUB_ENABLE_HF_TRANSFER=1
 export CUDA_LAUNCH_BLOCKING=1
 
-accelerate launch  main.py \
+python  main_v2.py \
     --version v0 \
-    --model_name_or_path microsoft/phi-2\
-    --model_type phi2 \
+    --model_name_or_path microsoft/Phi-3-mini-4k-instruct \
+    --model_type phi3\
     --lora_enable True \
     --vision_tower vit3d \
     --bf16 0 \
     --fp16 1\
-    --output_dir ./LaMed/output/LaMed-Phi3-4B-finetune-0000 \
+    --output_dir ./output/TracPhi3-4B-finetune-0000 \
     --num_train_epochs 5 \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 4 \
