@@ -144,6 +144,7 @@ class BBox3DPredictor(nn.Module):
     ) -> torch.Tensor:
         """Compute bbox prediction loss with proper shape handling"""
         if not self.enabled or predictions is None:
+            print("predictions is None")
             return torch.tensor(
                 0.0, device=predictions.device if predictions is not None else "cpu"
             )
@@ -173,10 +174,13 @@ class BBox3DPredictor(nn.Module):
 
 if __name__=="__main__":
     builder = BBox3DPredictor()
-
+    target=torch.randn(2,3,6)
     vision_features=torch.randn(2, 256, 3072)
     text_features=torch.randn(2, 765, 3072)
     predictions=builder.predict_bboxes(vision_features,text_features)
+    # bbox_loss = builder.compute_bbox_loss(
+    #         predictions, targets, masks
+    #     )
     # print(predictions.shape)
     print("predictions",predictions.shape)
     # vision_features torch.Size([2, 256, 3072]) text_features torch.Size([2, 765, 3072])

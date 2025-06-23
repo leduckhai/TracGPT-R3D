@@ -20,7 +20,7 @@ class BBox3DHead(nn.Module):
 
     def __init__(
         self,
-        input_dim: int=512,
+        input_dim: int=6144,
         hidden_dim: int = 512,
         num_classes: int = 1,
         max_bbox_len: int = 9,
@@ -96,9 +96,11 @@ class BBox3DHead(nn.Module):
         """
         batch_size = x.shape[0]
         features = self.feature_extractor(x)
+        # torch[2,512]
 
         # Predict all possible bboxes
         bbox_pred = self.bbox_head(features)  # [batch_size, 6 * max_bbox_len]
+        
         bbox_pred = bbox_pred.view(
             batch_size, self.max_bbox_len, 6
         )  # [batch_size, max_bbox_len, 6]
@@ -607,57 +609,4 @@ if __name__ == "__main__":
     output=model(inp)
     print("output",output)
 
-    # # Example ground truth boxes in your format: [x_min, y_min, z_min, x_max, y_max, z_max]
-    # gt_boxes_minmax = torch.tensor(
-    #     [
-    #         [1.0, 2.0, 0.5, 4.0, 5.0, 2.0],  # Box 1
-    #         [-2.0, -1.0, -0.5, 1.0, 2.0, 1.5],  # Box 2
-    #         [0.0, 0.0, 0.0, 3.0, 3.0, 3.0],  # Box 3
-    #     ]
-    # )
-
-    # print(f"Ground Truth (min/max format): {gt_boxes_minmax}")
-
-    # # Convert to model format (center + size)
-    # gt_boxes_center = model.convert_gt_to_model_format(gt_boxes_minmax)
-    # print(f"Ground Truth (center+size format): {gt_boxes_center}")
-    # print(f"Normalized: {model.normalize_coords}")
-
-    # # Example model predictions
-    # batch_size = 2
-    # input_features = torch.randn(batch_size, 256)
-
-    # # Forward pass
-    # outputs = model(input_features, apply_constraints=True)
-    # print(f"\nModel predictions shape: {outputs['bbox_pred'].shape}")
-    # print(f"Sample prediction (normalized): {outputs['bbox_pred'][0, 0]}")
-
-    # # Convert model predictions back to GT format
-    # pred_gt_format = model.convert_model_to_gt_format(
-    #     outputs["bbox_pred"][0:1, 0:1]
-    # )  # First box
-    # print(f"Prediction in GT format: {pred_gt_format}")
-
-    # print(f"\n=== Benefits of Normalization ===")
-    # print("✅ Stable training (values in [0,1] range)")
-    # print("✅ Better gradient flow")
-    # print("✅ Easier to set learning rates")
-    # print("✅ Model learns relative positions/sizes")
-    # print("✅ Works well with sigmoid activation")
-
-    # print(f"\n=== Training Pipeline ===")
-    # print("1. Load GT boxes: [x_min, y_min, z_min, x_max, y_max, z_max]")
-    # print(
-    #     "2. Convert to model format: [center_x, center_y, center_z, width, height, length]"
-    # )
-    # print("3. Normalize to [0,1]: Apply coordinate bounds")
-    # print("4. Train model with normalized targets")
-    # print("5. Apply sigmoid constraints during inference")
-    # print("6. Denormalize predictions for evaluation")
-
-    # # Example loss calculation setup
-    # print(f"\n=== Loss Calculation Example ===")
-    # # You would use gt_boxes_center as targets for training
-    # print(f"Targets for training: {gt_boxes_center}")
-    # print("Loss = MSE(model_predictions, normalized_gt_boxes)")
-    # print("+ confidence_loss + classification_loss")
+    

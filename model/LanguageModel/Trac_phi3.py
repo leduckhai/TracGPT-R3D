@@ -271,12 +271,18 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         masks = bbox_masks[bbox_samples]
 
         # Predict bboxes
-        print("vision_features", vision_features.shape, "text_features", text_features.shape)
+        print(
+            "vision_features",
+            vision_features.shape,
+            "text_features",
+            text_features.shape,
+        )
         bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
             vision_features, text_features
         )
 
         # Compute loss
+        print("target", targets.shape, "mask", masks.shape,targets,"mask",masks)
         bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss(
             bbox_predictions, targets, masks
         )
@@ -367,16 +373,21 @@ if __name__ == "__main__":
 
     model_max_length = 512
     tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-    special_token = {
-        "additional_special_tokens": [
-            "<im_patch>",
-            "<bx_start>",
-            "<bx_end>",
-            "<image>",
-            "<image_newline>",
-        ]
-    }
-    tokenizer.add_special_tokens(special_token)
+    
+    special_tokens = [
+        "<im_patch>",
+        "<bx_start>", 
+        "<bx_end>",
+        "<image>",
+        "<image_newline>"
+    ]
+
+    if hasattr(tokenizer, 'add_special_tokens'):
+        num_added = tokenizer.add_special_tokens({'additional_special_tokens': special_tokens})
+        print(f"Added {num_added} new special tokens")
+    else:
+        print("Warning: Tokenizer doesn't support adding special tokens")
+    
     tokenizer.add_tokens("[SEG]")
     collator = BboxAwareCollator(
         tokenizer=tokenizer,
@@ -452,6 +463,8 @@ if __name__ == "__main__":
         position_ids = position_ids.to("cuda")
 
         with torch.no_grad():
+            pass
+            break
 
         # outputs = model(
         #     input_ids=input_ids,
