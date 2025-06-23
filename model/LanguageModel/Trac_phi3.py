@@ -7,7 +7,7 @@ import os
 
 # Load from .env file
 load_dotenv()
-ROOT = os.getenv("ROOT")
+ROOT = os.getenv("ROOT") or "/workspace/repo/TracGPT-R3D"
 import sys
 
 sys.path.append(ROOT)
@@ -15,11 +15,7 @@ import torch.nn.functional as F
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
-    Phi3Config,
     Phi3Model,
-    PhiModel,
-    PhiConfig,
-    PhiForCausalLM,
     Phi3ForCausalLM,
 )
 
@@ -43,7 +39,7 @@ from model.bbox3d.builder_v2 import BBox3DPredictor
 class VisionEncoder(nn.Module):
     """Handles vision encoding and projection"""
 
-    def __init__(self,vision_tower_config="vit3d"): 
+    def __init__(self, vision_tower_config="vit3d"):
         super().__init__()
         self.vision_tower_config = vision_tower_config
         self.vision_tower = None
@@ -141,8 +137,6 @@ class TracPhi3Model(Phi3Model):
         super().__init__(config)
         self.config = config
         self.multimodal_config = config.multimodal
-        print("multimodal_config", self.multimodal_config)
-        # Initialize multimodal components
         self.vision_encoder = VisionEncoder()
         self.bbox3d_predictor = BBox3DPredictor()
         self.multimodal_processor = MultimodalProcessor(self.vision_encoder)
@@ -162,6 +156,7 @@ class TracPhi3Model(Phi3Model):
         #     vision_path = model_args.pretrain_vision_model
         #     projector_path = getattr(model_args, "pretrain_mm_mlp_adapter", None)
         #     self.vision_encoder.load_pretrained_weights(vision_path, projector_path)
+
 
 class TracPhi3ForCausalLM(Phi3ForCausalLM):
     """Trac Phi3 for causal language modeling with 3D bbox prediction"""
@@ -227,15 +222,9 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
                 past_key_values=kwargs.get("past_key_values"),
                 labels=labels,
             )
-        # else:
-        if not image_features:
+        if image_features is None:
             print("image feature is none")
-            return 
-        else:
-            print("image fearure",image_features.shape)
-        print("mode", mode, "input_ids", input_ids.shape, "images", images.shape, "bbox_gts", bbox_gts.shape, "bbox_masks", bbox_masks.shape,"position_ids", kwargs.get("position_ids", None), "attention_masks", attention_masks.shape, "labels", labels.shape)
-
-
+            return
         outputs = super().forward(
             input_ids=None,
             inputs_embeds=inputs_embeds,
@@ -262,7 +251,6 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
 
     def _handle_bbox_prediction(self, outputs, image_features, bbox_gts, bbox_masks):
         """Handle 3D bounding box prediction"""
-        # Check for valid bbox samples
         if not bbox_masks.any():
             return outputs
 
@@ -270,15 +258,20 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         if not bbox_samples.any():
             print("No valid bbox samples found.")
             return outputs
-
-        # Extract features for samples with bboxes
-        print("image_features", image_features.shape, "bbox_samples", bbox_samples.shape,bbox_samples)
+        print(
+            "image_features",
+            image_features.shape,
+            "bbox_samples",
+            bbox_samples.shape,
+            bbox_samples,
+        )
         vision_features = image_features[bbox_samples]
         text_features = outputs.hidden_states[-1][bbox_samples]
         targets = bbox_gts[bbox_samples]
         masks = bbox_masks[bbox_samples]
 
         # Predict bboxes
+        print("vision_features", vision_features.shape, "text_features", text_features.shape)
         bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
             vision_features, text_features
         )
@@ -371,11 +364,17 @@ if __name__ == "__main__":
 
     from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
     from transformers import AutoConfig, AutoModelForCausalLM
-    
+
     model_max_length = 512
-    tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
     special_token = {
-        "additional_special_tokens": ["<im_patch>", "<bx_start>", "<bx_end>","<image>", "<image_newline>"]
+        "additional_special_tokens": [
+            "<im_patch>",
+            "<bx_start>",
+            "<bx_end>",
+            "<image>",
+            "<image_newline>",
+        ]
     }
     tokenizer.add_special_tokens(special_token)
     tokenizer.add_tokens("[SEG]")
@@ -384,36 +383,85 @@ if __name__ == "__main__":
         max_length=model_max_length,
         max_bbox_length=9,
     )
-    
+
     ds = QA3DDataset()
     dl = DataLoader(ds, batch_size=2, shuffle=True, collate_fn=collator)
-    config = TracPhi3Config(img_token_id = tokenizer.convert_tokens_to_ids("<im_patch>"),
-    bbox3d_token_id = tokenizer.convert_tokens_to_ids("<bx_start>"))
+    img_token_id = tokenizer.convert_tokens_to_ids("<im_patch>")
+    config = TracPhi3Config(
+        img_token_id=tokenizer.convert_tokens_to_ids("<im_patch>"),
+        bbox3d_token_id=tokenizer.convert_tokens_to_ids("<bx_start>"),
+    )
     # model_args.seg_token_id = tokenizer.convert_tokens_to_ids("[SEG]")
     # model_args.vocab_size = len(tokenizer)
     model = TracPhi3ForCausalLM(config)
     model.get_model().initialize_multimodal_components()
-    model=model.to("cuda")
+    model = model.to("cuda")
     for batch in dl:
-        images, input_ids, attention_mask, labels, bbox_gt, bbox_mask, answer_types,position_ids = batch.values()
-        images=images.to("cuda")
-        input_ids=input_ids.to("cuda")
-        attention_mask=attention_mask.to("cuda")
-        labels=labels.to("cuda")
-        bbox_gt=bbox_gt.to("cuda")
-        bbox_mask=bbox_mask.to("cuda")
-        answer_types=answer_types
-        position_ids=position_ids.to("cuda")
+        (
+            images,
+            input_ids,
+            attention_mask,
+            labels,
+            bbox_gt,
+            bbox_mask,
+            answer_types,
+            position_ids,
+        ) = batch.values()
+        images = images.to("cuda")
+        input_ids = input_ids.to("cuda")
+        input_ids[:, 2:5] = img_token_id
+        attention_mask = attention_mask.to("cuda")
+        labels = labels.to("cuda")
+        bbox_gt = bbox_gt.to("cuda")
+        bbox_mask = bbox_mask.to("cuda")
+        answer_types = answer_types
+        position_ids = position_ids.to("cuda")
 
         outputs = model(
-        input_ids=input_ids,
-        images=images,
-        bbox_gts=bbox_gt,
-        bbox_masks=bbox_mask,
-        labels=labels,
-        attention_masks=attention_mask,
-        answer_types=answer_types,
-        position_ids=position_ids
+            input_ids=input_ids,
+            images=images,
+            bbox_gts=bbox_gt,
+            bbox_masks=bbox_mask,
+            labels=labels,
+            attention_masks=attention_mask,
+            answer_types=answer_types,
+            position_ids=position_ids,
         )
-        print("outputs:", outputs)
+        # print("outputs:", outputs)
         break
+
+    for batch in dl:
+        (
+            images,
+            input_ids,
+            attention_mask,
+            labels,
+            bbox_gt,
+            bbox_mask,
+            answer_types,
+            position_ids,
+        ) = batch.values()
+        images = images.to("cuda")
+        input_ids = input_ids.to("cuda")
+        input_ids[:, 2:5] = img_token_id
+        attention_mask = attention_mask.to("cuda")
+        labels = labels.to("cuda")
+        bbox_gt = bbox_gt.to("cuda")
+        bbox_mask = bbox_mask.to("cuda")
+        answer_types = answer_types
+        position_ids = position_ids.to("cuda")
+
+        with torch.no_grad():
+
+        # outputs = model(
+        #     input_ids=input_ids,
+        #     images=images,
+        #     bbox_gts=bbox_gt,
+        #     bbox_masks=bbox_mask,
+        #     labels=labels,
+        #     attention_masks=attention_mask,
+        #     answer_types=answer_types,
+        #     position_ids=position_ids,
+        # )
+        # # print("outputs:", outputs)
+        # break

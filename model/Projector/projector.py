@@ -89,7 +89,7 @@ def build_mm_projector(mm_projector_type='spp'):
         "image_size": [32, 256, 256],
         "patch_size": [4, 16, 16],
         "in_dim": 2560,
-        "out_dim":758,
+        "out_dim":3072,
         "layer_type": 'mlp',
         "layer_num": 2,
         "pooling_type": 'spatial',
@@ -99,8 +99,6 @@ def build_mm_projector(mm_projector_type='spp'):
     config=SimpleNamespace(**config)
     if config.mm_projector_type == 'linear':
         return FullLinear(config)
-    # ([2, 2048, 768])
-    # in_dim=config.mm_hidden_size= 512
     elif config.mm_projector_type    == 'spp':
         return SpatialPoolingProjector(image_size=config.image_size,
                                         patch_size=config.patch_size,

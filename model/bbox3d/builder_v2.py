@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from types import SimpleNamespace
 
+import sys 
+sys.path.append("/workspace/repo/TracGPT-R3D")
 
 class BBox3DPredictor(nn.Module):
     """Handles 3D bounding box prediction"""
@@ -124,14 +126,15 @@ class BBox3DPredictor(nn.Module):
             vision_pooled = vision_features.mean(dim=1)  # [B, D_v]
             text_pooled = text_features.mean(dim=1)  # [B, D_t]
 
+            print("vision_pooled",vision_pooled.shape)
+            print("text_pooled",text_pooled.shape)
             # Combine features
             combined = torch.cat([vision_pooled, text_pooled], dim=-1)
-
+            print("combined",combined.shape)
             # Predict bboxes
             return self.bbox3d_head(combined)
         except Exception as e:
-            print(f"Warning: Failed to predict bboxes: {e}")
-            return None
+            raise Exception(f"Warning: Failed to predict bboxes: {e}")
 
     def compute_bbox_loss(
         self,
@@ -167,3 +170,13 @@ class BBox3DPredictor(nn.Module):
         except Exception as e:
             print(f"Warning: Failed to compute bbox loss: {e}")
             return torch.tensor(0.0, device=predictions.device)
+
+if __name__=="__main__":
+    builder = BBox3DPredictor()
+
+    vision_features=torch.randn(2, 256, 3072)
+    text_features=torch.randn(2, 765, 3072)
+    predictions=builder.predict_bboxes(vision_features,text_features)
+    # print(predictions.shape)
+    print("predictions",predictions.shape)
+    # vision_features torch.Size([2, 256, 3072]) text_features torch.Size([2, 765, 3072])
