@@ -2,16 +2,16 @@ import torch
 from torch import nn
 from typing import Optional
 import torch.nn.functional as F
-from einops import rearrange
 from types import SimpleNamespace
 
 import sys 
 from dotenv import load_dotenv
 import os
-# Load from .env file
 load_dotenv()
 ROOT=os.getenv("ROOT")
 sys.path.append(ROOT)
+import torch
+from scipy.optimize import linear_sum_assignment
 
 class BBox3DPredictor(nn.Module):
     """Handles 3D bounding box prediction"""
@@ -148,44 +148,116 @@ class BBox3DPredictor(nn.Module):
         masks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute bbox prediction loss with proper shape handling"""
-        if not self.enabled or predictions is None:
-            print("predictions is None")
-            return torch.tensor(
-                0.0, device=predictions.device if predictions is not None else "cpu"
-            )
+        bbox_preds = predictions["filtered_bbox_pred"]
+        conf_preds = predictions["filtered_conf_pred"]
+        total_loss = torch.tensor(0.0, device=bbox_preds[0].device)
 
-        try:
-            # Handle different prediction shapes
-            if predictions.dim() == 2 and targets.dim() == 3:
-                # Pred: [B, 6], Target: [B, max_boxes, 6]
-                if masks is not None:
-                    # Use first valid box as target
-                    valid_indices = masks.argmax(dim=1)  # Get first valid box index
-                    targets = targets[torch.arange(targets.size(0)), valid_indices]
-                else:
-                    targets = targets[:, 0, :]  # Use first box
+        for b in range(len(bbox_preds)):
+            bbox_pred = bbox_preds[b]        # [num_preds, 6], in center format
+            conf_pred = conf_preds[b]        # [num_preds]
+            mask = masks[b]                  # [max_num_gt]
+            targets_b = targets[b]           # [max_num_gt, 6], center format
 
-            elif predictions.dim() == 3 and targets.dim() == 3:
-                # Both: [B, max_boxes, 6]
-                if masks is not None:
-                    loss_full = F.smooth_l1_loss(predictions, targets, reduction="none")
-                    loss_masked = loss_full * masks.unsqueeze(-1).float()
-                    return loss_masked.sum() / masks.sum().clamp(min=1)
+            #  Get most confident prediction
+            conf_idx = conf_pred.argmax()
+            top_pred = bbox_pred[conf_idx]   # [6] — in center format
 
-            return self.loss_calculator.compute_loss(predictions, targets, masks)
-        except Exception as e:
-            print(f"Warning: Failed to compute bbox loss: {e}")
-            return torch.tensor(0.0, device=predictions.device)
+            #  Filter valid GTs
+            valid_gt_boxes = targets_b[mask]  # [num_valid_gt, 6], center format
+
+            if len(valid_gt_boxes) == 0:
+                continue  # skip if no valid GTs
+
+            # Convert both to min-max for IoU
+            top_pred_minmax = self.bbox3d_head.convert_model_to_gt_format(top_pred.unsqueeze(0))       # [1, 6]
+            valid_gt_minmax = self.bbox3d_head.convert_model_to_gt_format(valid_gt_boxes)              # [num_valid_gt, 6]
+
+            #  Match to best GT via IoU
+            ious = compute_3d_iou_matrix(top_pred_minmax, valid_gt_minmax)  # [1, num_valid_gt]
+            best_gt_idx = ious[0].argmax()
+            best_gt = valid_gt_boxes[best_gt_idx]  # [6], still center format
+
+            #  Compute regression loss (center format vs center format)
+            loss = F.smooth_l1_loss(top_pred.unsqueeze(0), best_gt.unsqueeze(0))
+            total_loss += loss
+
+        return total_loss
+
+
+def compute_3d_iou_matrix(pred_boxes, gt_boxes):
+    """
+    Compute IoU matrix between predicted and ground truth 3D boxes
+    Args:
+        pred_boxes: [N, 6] in format [x_min, y_min, z_min, x_max, y_max, z_max]
+        gt_boxes:   [M, 6] in same format
+    Returns:
+        iou_matrix: [N, M] IoU values
+    """
+    N = pred_boxes.size(0)
+    M = gt_boxes.size(0)
+
+    iou_matrix = torch.zeros(N, M, device=pred_boxes.device)
+
+    for i in range(N):
+        for j in range(M):
+            iou_matrix[i, j] = box3d_iou_single(pred_boxes[i], gt_boxes[j])
+
+    return iou_matrix
+
+
+def box3d_iou_single(box1, box2):
+    """
+    Compute IoU between two axis-aligned 3D boxes
+    Args:
+        box1, box2: [6] tensor [x_min, y_min, z_min, x_max, y_max, z_max]
+    Returns:
+        iou: scalar IoU
+    """
+    # Intersection box
+    inter_min = torch.max(box1[:3], box2[:3])
+    inter_max = torch.min(box1[3:], box2[3:])
+    inter_dim = (inter_max - inter_min).clamp(min=0)
+    inter_vol = inter_dim.prod()
+
+    # Volumes
+    vol1 = (box1[3:] - box1[:3]).prod()
+    vol2 = (box2[3:] - box2[:3]).prod()
+
+    union_vol = vol1 + vol2 - inter_vol + 1e-8
+    iou = inter_vol / union_vol
+    return iou
+
+
+def match_boxes(pred_boxes, gt_boxes):
+    """
+    Match predicted boxes to GT boxes using Hungarian matching on IoU
+    Args:
+        pred_boxes: [N, 6] tensor
+        gt_boxes: [M, 6] tensor
+    Returns:
+        matched_pred_indices: list of indices into pred_boxes
+        matched_gt_indices: list of indices into gt_boxes
+    """
+    iou_matrix = compute_3d_iou_matrix(pred_boxes, gt_boxes)  # [N, M]
+    cost_matrix = 1.0 - iou_matrix.cpu().numpy()  # Hungarian minimizes cost
+
+    pred_inds, gt_inds = linear_sum_assignment(cost_matrix)
+
+    return pred_inds, gt_inds, iou_matrix[pred_inds, gt_inds]  # optional: return matched IoUs
+
+
 
 if __name__=="__main__":
+    #  assume bbox in format [center_x, center_y, center_z, width, height, length]
     builder = BBox3DPredictor()
     target=torch.randn(2,3,6)
     vision_features=torch.randn(2, 256, 3072)
     text_features=torch.randn(2, 765, 3072)
     predictions=builder.predict_bboxes(vision_features,text_features)
-    # bbox_loss = builder.compute_bbox_loss(
-    #         predictions, targets, masks
-    #     )
+    masks = torch.ones(2, 3, dtype=torch.bool)
+    bbox_loss = builder.compute_bbox_loss(
+            predictions, target, masks
+        )
     # print(predictions.shape)
-    print("predictions",predictions.shape)
+    # print("predictions",predictions.shape)
     # vision_features torch.Size([2, 256, 3072]) text_features torch.Size([2, 765, 3072])

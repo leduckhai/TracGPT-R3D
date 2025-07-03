@@ -274,32 +274,7 @@ class BBox3DHead(nn.Module):
         denormalized[..., 5] = normalized_boxes[..., 5] * z_range  # length
 
         return denormalized
-        """
-        Apply constraints to bbox predictions to ensure valid boxes
-        Args:
-            bbox_pred: [batch_size, max_bbox_len, 6] - center_x, center_y, center_z, width, height, length
-        Returns:
-            Constrained bbox predictions
-        """
-        constrained_bbox = bbox_pred.clone()
-
-        # Centers can be any value (positive or negative depending on coordinate system)
-        # No constraints on center coordinates: constrained_bbox[..., :3] = bbox_pred[..., :3]
-
-        # Dimensions (width, height, length) must be positive
-        # Option 1: Use ReLU to ensure positive values
-        constrained_bbox[..., 3:] = (
-            F.relu(bbox_pred[..., 3:]) + 1e-6
-        )  # Add small epsilon to avoid zero
-
-        # Option 2: Use exponential to ensure positive values (alternative)
-        # constrained_bbox[..., 3:] = torch.exp(bbox_pred[..., 3:])
-
-        # Option 3: Use softplus for smooth positive constraint (alternative)
-        # constrained_bbox[..., 3:] = F.softplus(bbox_pred[..., 3:])
-
-        return constrained_bbox
-
+     
     def _apply_dynamic_filtering(self, outputs, conf_threshold=0.5):
         """
         Apply dynamic filtering based on confidence scores
