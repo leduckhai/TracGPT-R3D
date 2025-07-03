@@ -6,7 +6,12 @@ from einops import rearrange
 from types import SimpleNamespace
 
 import sys 
-sys.path.append("/workspace/repo/TracGPT-R3D")
+from dotenv import load_dotenv
+import os
+# Load from .env file
+load_dotenv()
+ROOT=os.getenv("ROOT")
+sys.path.append(ROOT)
 
 class BBox3DPredictor(nn.Module):
     """Handles 3D bounding box prediction"""
