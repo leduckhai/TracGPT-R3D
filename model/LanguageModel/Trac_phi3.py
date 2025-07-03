@@ -32,8 +32,8 @@ import torch.nn as nn
 from typing import List, Optional, Tuple, Union, Any, Dict
 import json
 from model.multimodel_processor import MultimodalProcessor
-from model.Trac_phi_config import TracPhi3Config, MultimodalConfig
-from model.bbox3d.builder_v2 import BBox3DPredictor
+from model.Trac_phi_config import TracPhi3Config
+from model.bbox3d.builder import BBox3DPredictor
 
 
 class VisionEncoder(nn.Module):

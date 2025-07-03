@@ -1,587 +1,263 @@
-import torch
-import torch.nn as nn
+import torch 
+from torch import nn
+from typing import Optional
 import torch.nn.functional as F
 from types import SimpleNamespace
 
-def build_bbox3d_module():
-    """
-    Build the 3D Bounding Box prediction module based on configuration
-    Args:
-        config: Configuration object containing model parameters
-    Returns:
-        BBox3DHead instance
-    """
- 
-    return BBox3DHead()
+import sys 
+from dotenv import load_dotenv
+import os
+load_dotenv()
+ROOT=os.getenv("ROOT")
+sys.path.append(ROOT)
+import torch
+from scipy.optimize import linear_sum_assignment
 
+class BBox3DPredictor(nn.Module):
+    """Handles 3D bounding box prediction"""
 
-class BBox3DHead(nn.Module):
-    """3D Bounding Box prediction head with dynamic output capability"""
-
-    def __init__(
-        self,
-        input_dim: int=6144,
-        hidden_dim: int = 512,
-        num_classes: int = 1,
-        max_bbox_len: int = 9,
-        normalize_coords: bool = True,
-        coord_bounds: dict = None,
-    ):
+    def __init__(self):
         super().__init__()
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.num_classes = num_classes
-        self.max_bbox_len = max_bbox_len
-        self.normalize_coords = normalize_coords
-
-        # Default coordinate bounds for normalization
-        if coord_bounds is None:
-            self.coord_bounds = {
-                "x_min": -10.0,
-                "x_max": 10.0,
-                "y_min": -10.0,
-                "y_max": 10.0,
-                "z_min": -5.0,
-                "z_max": 5.0,
-            }
-        else:
-            self.coord_bounds = coord_bounds
-
-        # Feature extraction layers
-        self.feature_extractor = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-        )
-
-        # 3D bbox regression: predicts normalized coordinates if enabled
-        # Format: center (x,y,z) + dimensions (w,h,l) = 6 parameters (no rotation)
-        self.bbox_head = nn.Linear(hidden_dim, 6 * max_bbox_len)  # 6 params per bbox
-
-        # Classification head for each bbox
-        if num_classes > 1:
-            self.cls_head = nn.Linear(hidden_dim, num_classes * max_bbox_len)
-        else:
-            self.cls_head = None
-
-        # Confidence/objectness head for each bbox
-        self.conf_head = nn.Linear(hidden_dim, max_bbox_len)
-
-        # self._initialize_weights()
-
-    def _initialize_weights(self):
-        """Initialize weights"""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-    def forward(
-        self, x, dynamic_output=True, conf_threshold=0.5, apply_constraints=True
-    ):
-        # torch.Size([2, 6144])
-        """
-        Forward pass with dynamic output capability
-        Args:
-            x: Input features [batch_size, input_dim]
-            dynamic_output: Whether to filter outputs based on confidence
-            conf_threshold: Confidence threshold for dynamic filtering
-            apply_constraints: Whether to apply bbox constraints (positive dimensions)
-        Returns:
-            Dict containing bbox predictions, confidence, and optionally classification
-        """
-        batch_size = x.shape[0]
-        features = self.feature_extractor(x)
-        # torch[2,512]
-
-        # Predict all possible bboxes
-        bbox_pred = self.bbox_head(features)  # [batch_size, 6 * max_bbox_len]
-        
-        bbox_pred = bbox_pred.view(
-            batch_size, self.max_bbox_len, 6
-        )  # [batch_size, max_bbox_len, 6]
-
-        # Apply constraints to bbox predictions
-        # if apply_constraints:
-        #     bbox_pred = self._apply_bbox_constraints(bbox_pred)
-
-        # Confidence scores for each bbox
-        conf_pred = torch.sigmoid(
-            self.conf_head(features)
-        )  # [batch_size, max_bbox_len]
-
-        outputs = {
-            "bbox_pred": bbox_pred,
-            "conf_pred": conf_pred,
-            "raw_bbox_pred": (
-                bbox_pred if not apply_constraints else None
-            ),  # Keep raw predictions for debugging
+        config={
+            "bbox3d_module": True,
+            "mm_hidden_size": 512,  # Example size, adjust as needed
+            "bbox3d_head_type": "default",  # Placeholder for bbox3d head type
+            "bbox3d_projector_type": "default",  # Placeholder for bbox3d
         }
+        config= SimpleNamespace(**config)
+        self.config = config
+        self.bbox3d_head = None
+        self.bbox3d_projector = None
+        self.enabled = False
+        self.loss_calculator = None
 
-        # Classification predictions if multi-class
-        if self.cls_head is not None:
-            cls_pred = self.cls_head(
-                features
-            )  # [batch_size, num_classes * max_bbox_len]
-            cls_pred = cls_pred.view(batch_size, self.max_bbox_len, self.num_classes)
-            outputs["cls_pred"] = cls_pred
+        if config.bbox3d_module:
+            try:
+                self._build_components()
+            except Exception as e:
+                print(f"Warning: Failed to build bbox3d components: {e}")
 
-        # Dynamic output filtering
-        if dynamic_output:
-            filtered_outputs = self._apply_dynamic_filtering(outputs, conf_threshold)
-            outputs.update(filtered_outputs)
-
-        return outputs
-
-    def convert_gt_to_model_format(self, gt_boxes):
-        """
-        Convert ground truth boxes from [x_min, y_min, z_min, x_max, y_max, z_max]
-        to model format [center_x, center_y, center_z, width, height, length]
-
-        Args:
-            gt_boxes: [..., 6] - ground truth boxes in min/max format
-        Returns:
-            model_boxes: [..., 6] - boxes in center+size format
-        """
-        # Extract min/max coordinates
-        x_min, y_min, z_min = gt_boxes[..., 0], gt_boxes[..., 1], gt_boxes[..., 2]
-        x_max, y_max, z_max = gt_boxes[..., 3], gt_boxes[..., 4], gt_boxes[..., 5]
-
-        # Convert to center + dimensions
-        center_x = (x_min + x_max) / 2
-        center_y = (y_min + y_max) / 2
-        center_z = (z_min + z_max) / 2
-
-        width = x_max - x_min
-        height = y_max - y_min
-        length = z_max - z_min
-
-        # Stack into model format
-        model_boxes = torch.stack(
-            [center_x, center_y, center_z, width, height, length], dim=-1
+    def _build_components(self):
+        """Build bbox3d components"""
+        self.bbox3d_head = self._build_bbox3d_head()
+        self.bbox3d_projector = nn.Sequential(
+            nn.Linear(self.config.mm_hidden_size, self.config.mm_hidden_size),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.config.mm_hidden_size, self.config.mm_hidden_size),
+            nn.Dropout(0.1),
         )
+        self.loss_calculator = self._create_loss_calculator()
+        self.enabled = True
 
-        # Normalize if enabled
-        if self.normalize_coords:
-            model_boxes = self.normalize_boxes(model_boxes)
+    def _build_bbox3d_head(self):
+        """Build bbox3d head - implement based on your builder"""
+        try:
+            from model.bbox3d.bbox_head import build_bbox3d_module
 
-        return model_boxes
+            return build_bbox3d_module()
+        except ImportError as e:
+            raise ImportError(f"Failed to import bbox3d builder: {e}")
 
-    def convert_model_to_gt_format(self, model_boxes):
-        """
-        Convert model predictions from [center_x, center_y, center_z, width, height, length]
-        to ground truth format [x_min, y_min, z_min, x_max, y_max, z_max]
+    def _create_loss_calculator(self):
+        """Create loss calculation module"""
+        try:
+            from model.loss import L1Loss, IoU3DLoss
 
-        Args:
-            model_boxes: [..., 6] - boxes in center+size format
-        Returns:
-            gt_boxes: [..., 6] - boxes in min/max format
-        """
-        # Denormalize if needed
-        if self.normalize_coords:
-            model_boxes = self.denormalize_boxes(model_boxes)
+            class BBox3DLossCalculator(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.l1_loss = L1Loss()
+                    self.iou3d_loss = IoU3DLoss()
 
-        # Extract center and dimensions
-        center_x, center_y, center_z = (
-            model_boxes[..., 0],
-            model_boxes[..., 1],
-            model_boxes[..., 2],
-        )
-        width, height, length = (
-            model_boxes[..., 3],
-            model_boxes[..., 4],
-            model_boxes[..., 5],
-        )
+                def compute_loss(self, predictions, targets, masks=None):
+                    """Compute bbox3d loss with proper masking"""
+                    if masks is not None:
+                        # Apply mask to compute loss only on valid boxes
+                        valid_mask = masks.unsqueeze(-1).float()
+                        masked_pred = predictions * valid_mask
+                        masked_target = targets * valid_mask
 
-        # Convert to min/max coordinates
-        x_min = center_x - width / 2
-        y_min = center_y - height / 2
-        z_min = center_z - length / 2
+                        l1_loss = self.l1_loss(masked_pred, masked_target)
+                        iou_loss = self.iou3d_loss(masked_pred, masked_target)
 
-        x_max = center_x + width / 2
-        y_max = center_y + height / 2
-        z_max = center_z + length / 2
-
-        # Stack into GT format
-        gt_boxes = torch.stack([x_min, y_min, z_min, x_max, y_max, z_max], dim=-1)
-
-        return gt_boxes
-
-    def normalize_boxes(self, boxes):
-        """
-        Normalize boxes to [0, 1] range
-        Args:
-            boxes: [..., 6] - [center_x, center_y, center_z, width, height, length]
-        Returns:
-            normalized_boxes: [..., 6] - normalized to [0, 1]
-        """
-        normalized = boxes.clone()
-
-        # Normalize centers to [0, 1]
-        x_range = self.coord_bounds["x_max"] - self.coord_bounds["x_min"]
-        y_range = self.coord_bounds["y_max"] - self.coord_bounds["y_min"]
-        z_range = self.coord_bounds["z_max"] - self.coord_bounds["z_min"]
-
-        normalized[..., 0] = (
-            boxes[..., 0] - self.coord_bounds["x_min"]
-        ) / x_range  # center_x
-        normalized[..., 1] = (
-            boxes[..., 1] - self.coord_bounds["y_min"]
-        ) / y_range  # center_y
-        normalized[..., 2] = (
-            boxes[..., 2] - self.coord_bounds["z_min"]
-        ) / z_range  # center_z
-
-        # Normalize dimensions by the respective ranges
-        normalized[..., 3] = boxes[..., 3] / x_range  # width
-        normalized[..., 4] = boxes[..., 4] / y_range  # height
-        normalized[..., 5] = boxes[..., 5] / z_range  # length
-
-        return normalized
-
-    def denormalize_boxes(self, normalized_boxes):
-        """
-        Denormalize boxes from [0, 1] range to original coordinates
-        Args:
-            normalized_boxes: [..., 6] - normalized boxes
-        Returns:
-            boxes: [..., 6] - denormalized boxes
-        """
-        denormalized = normalized_boxes.clone()
-
-        # Denormalize centers
-        x_range = self.coord_bounds["x_max"] - self.coord_bounds["x_min"]
-        y_range = self.coord_bounds["y_max"] - self.coord_bounds["y_min"]
-        z_range = self.coord_bounds["z_max"] - self.coord_bounds["z_min"]
-
-        denormalized[..., 0] = (
-            normalized_boxes[..., 0] * x_range + self.coord_bounds["x_min"]
-        )  # center_x
-        denormalized[..., 1] = (
-            normalized_boxes[..., 1] * y_range + self.coord_bounds["y_min"]
-        )  # center_y
-        denormalized[..., 2] = (
-            normalized_boxes[..., 2] * z_range + self.coord_bounds["z_min"]
-        )  # center_z
-
-        # Denormalize dimensions
-        denormalized[..., 3] = normalized_boxes[..., 3] * x_range  # width
-        denormalized[..., 4] = normalized_boxes[..., 4] * y_range  # height
-        denormalized[..., 5] = normalized_boxes[..., 5] * z_range  # length
-
-        return denormalized
-     
-    def _apply_dynamic_filtering(self, outputs, conf_threshold=0.5):
-        """
-        Apply dynamic filtering based on confidence scores
-        Args:
-            outputs: Dictionary containing predictions
-            conf_threshold: Confidence threshold for filtering
-        Returns:
-            Dictionary with filtered outputs
-        """
-        batch_size = outputs["bbox_pred"].shape[0]
-        filtered_outputs = {
-            "filtered_bbox_pred": [],
-            "filtered_conf_pred": [],
-            "filtered_cls_pred": [] if "cls_pred" in outputs else None,
-            "num_valid_boxes": [],
-        }
-
-        for b in range(batch_size):
-            # Get valid indices based on confidence threshold
-            valid_mask = outputs["conf_pred"][b] > conf_threshold
-            valid_indices = torch.where(valid_mask)[0]
-
-            if len(valid_indices) > 0:
-                # Filter bbox predictions
-                filtered_bbox = outputs["bbox_pred"][b][valid_indices]
-                filtered_conf = outputs["conf_pred"][b][valid_indices]
-
-                filtered_outputs["filtered_bbox_pred"].append(filtered_bbox)
-                filtered_outputs["filtered_conf_pred"].append(filtered_conf)
-
-                # Filter classification predictions if available
-                if "cls_pred" in outputs:
-                    filtered_cls = outputs["cls_pred"][b][valid_indices]
-                    filtered_outputs["filtered_cls_pred"].append(filtered_cls)
-
-                filtered_outputs["num_valid_boxes"].append(len(valid_indices))
-            else:
-                # No valid boxes
-                filtered_outputs["filtered_bbox_pred"].append(
-                    torch.empty(0, 6, device=outputs["bbox_pred"].device)
-                )
-                filtered_outputs["filtered_conf_pred"].append(
-                    torch.empty(0, device=outputs["conf_pred"].device)
-                )
-
-                if "cls_pred" in outputs:
-                    filtered_outputs["filtered_cls_pred"].append(
-                        torch.empty(
-                            0, self.num_classes, device=outputs["cls_pred"].device
+                        # Normalize by number of valid boxes
+                        num_valid = masks.sum().clamp(min=1)
+                        return (l1_loss + iou_loss) / num_valid
+                    else:
+                        return self.l1_loss(predictions, targets) + self.iou3d_loss(
+                            predictions, targets
                         )
-                    )
 
-                filtered_outputs["num_valid_boxes"].append(0)
+            return BBox3DLossCalculator()
+        except ImportError:
+            # Fallback loss calculator
+            return nn.MSELoss()
 
-        return filtered_outputs
+    def extract_bbox_features(
+        self, hidden_states: torch.Tensor, bbox_token_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Extract bbox features from hidden states"""
+        bbox_prompts = []
 
-    def post_process(self, outputs, nms_threshold=0.5, max_detections=None):
-        """
-        Post-process predictions with NMS and top-k filtering
-        Args:
-            outputs: Dictionary containing model outputs
-            nms_threshold: IoU threshold for NMS
-            max_detections: Maximum number of detections to keep per batch
-        Returns:
-            Dictionary with post-processed outputs
-        """
-        if max_detections is None:
-            max_detections = self.max_bbox_len
+        for i in range(bbox_token_mask.shape[0]):
+            token_count = torch.sum(bbox_token_mask[i])
 
-        batch_size = outputs["bbox_pred"].shape[0]
-        processed_outputs = {
-            "final_bbox_pred": [],
-            "final_conf_pred": [],
-            "final_cls_pred": [] if "cls_pred" in outputs else None,
-            "final_num_boxes": [],
-        }
+            if token_count == 1:
+                bbox_token = hidden_states[i][bbox_token_mask[i]]
+                bbox_prompt = self.bbox3d_projector(bbox_token)
+            elif token_count > 1:
+                bbox_tokens = hidden_states[i][bbox_token_mask[i]]
+                bbox_token = torch.mean(bbox_tokens, dim=0, keepdim=True)
+                bbox_prompt = self.bbox3d_projector(bbox_token)
+            else:
+                bbox_prompt = torch.zeros(
+                    [1, self.config.mm_hidden_size],
+                    dtype=hidden_states.dtype,
+                    device=hidden_states.device,
+                )
+            bbox_prompts.append(bbox_prompt)
 
-        for b in range(batch_size):
-            bbox_pred = outputs["bbox_pred"][b]  # [max_bbox_len, 6]
-            conf_pred = outputs["conf_pred"][b]  # [max_bbox_len]
+        return torch.cat(bbox_prompts, dim=0)
 
-            # Sort by confidence
-            sorted_indices = torch.argsort(conf_pred, descending=True)
-            sorted_bbox = bbox_pred[sorted_indices]
-            sorted_conf = conf_pred[sorted_indices]
+    def predict_bboxes(
+        self, vision_features: torch.Tensor, text_features: torch.Tensor
+    ) -> torch.Tensor:
+        """Predict 3D bounding boxes"""
+        if not self.enabled:
+            return None
 
-            # Apply NMS (simplified version - you might want to use torchvision.ops.nms)
-            keep_indices = self._simple_nms_3d(sorted_bbox, sorted_conf, nms_threshold)
+        try:
+            # Pool features
+            vision_pooled = vision_features.mean(dim=1)  # [B, D_v]
+            text_pooled = text_features.mean(dim=1)  # [B, D_t]
 
-            # Limit to max_detections
-            if len(keep_indices) > max_detections:
-                keep_indices = keep_indices[:max_detections]
+            print("vision_pooled",vision_pooled.shape)
+            print("text_pooled",text_pooled.shape)
+            # Combine features
+            combined = torch.cat([vision_pooled, text_pooled], dim=-1)
+            print("combined",combined.shape)
+            # Predict bboxes
+            return self.bbox3d_head(combined)
+        except Exception as e:
+            raise Exception(f"Warning: Failed to predict bboxes: {e}")
 
-            final_bbox = sorted_bbox[keep_indices]
-            final_conf = sorted_conf[keep_indices]
+    def compute_bbox_loss(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        masks: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute bbox prediction loss with proper shape handling"""
+        bbox_preds = predictions["filtered_bbox_pred"]
+        conf_preds = predictions["filtered_conf_pred"]
+        total_loss = torch.tensor(0.0, device=bbox_preds[0].device)
 
-            processed_outputs["final_bbox_pred"].append(final_bbox)
-            processed_outputs["final_conf_pred"].append(final_conf)
-            processed_outputs["final_num_boxes"].append(len(keep_indices))
+        for b in range(len(bbox_preds)):
+            bbox_pred = bbox_preds[b]        # [num_preds, 6], in center format
+            conf_pred = conf_preds[b]        # [num_preds]
+            mask = masks[b]                  # [max_num_gt]
+            targets_b = targets[b]           # [max_num_gt, 6], center format
 
-            # Handle classification if available
-            if "cls_pred" in outputs:
-                cls_pred = outputs["cls_pred"][b][sorted_indices]
-                final_cls = cls_pred[keep_indices]
-                processed_outputs["final_cls_pred"].append(final_cls)
+            #  Get most confident prediction
+            conf_idx = conf_pred.argmax()
+            top_pred = bbox_pred[conf_idx]   # [6] — in center format
 
-        return processed_outputs
+            #  Filter valid GTs
+            valid_gt_boxes = targets_b[mask]  # [num_valid_gt, 6], center format
 
-    def _simple_nms_3d(self, boxes, scores, threshold):
-        """
-        Simple 3D NMS implementation for axis-aligned boxes
-        Args:
-            boxes: [N, 6] - center_x, center_y, center_z, width, height, length
-            scores: [N] - confidence scores
-            threshold: IoU threshold
-        Returns:
-            List of indices to keep
-        """
-        if len(boxes) == 0:
-            return []
+            if len(valid_gt_boxes) == 0:
+                continue  # skip if no valid GTs
 
-        keep = []
-        order = torch.argsort(scores, descending=True)
+            # Convert both to min-max for IoU
+            top_pred_minmax = self.bbox3d_head.convert_model_to_gt_format(top_pred.unsqueeze(0))       # [1, 6]
+            valid_gt_minmax = self.bbox3d_head.convert_model_to_gt_format(valid_gt_boxes)              # [num_valid_gt, 6]
 
-        while len(order) > 0:
-            i = order[0]
-            keep.append(i.item())
+            #  Match to best GT via IoU
+            ious = compute_3d_iou_matrix(top_pred_minmax, valid_gt_minmax)  # [1, num_valid_gt]
+            best_gt_idx = ious[0].argmax()
+            best_gt = valid_gt_boxes[best_gt_idx]  # [6], still center format
 
-            if len(order) == 1:
-                break
+            #  Compute regression loss (center format vs center format)
+            loss = F.smooth_l1_loss(top_pred.unsqueeze(0), best_gt.unsqueeze(0))
+            total_loss += loss
 
-            # Calculate IoU with remaining boxes
-            ious = self._calculate_3d_iou(boxes[i : i + 1], boxes[order[1:]])
+        return total_loss
 
-            # Keep boxes with IoU less than threshold
-            inds = torch.where(ious <= threshold)[0]
-            order = order[inds + 1]
 
-        return keep
+def compute_3d_iou_matrix(pred_boxes, gt_boxes):
+    """
+    Compute IoU matrix between predicted and ground truth 3D boxes
+    Args:
+        pred_boxes: [N, 6] in format [x_min, y_min, z_min, x_max, y_max, z_max]
+        gt_boxes:   [M, 6] in same format
+    Returns:
+        iou_matrix: [N, M] IoU values
+    """
+    N = pred_boxes.size(0)
+    M = gt_boxes.size(0)
 
-    def _calculate_3d_iou(self, box1, boxes2):
-        """
-        Calculate 3D IoU between axis-aligned boxes
-        Args:
-            box1: [1, 6] - center_x, center_y, center_z, width, height, length
-            boxes2: [N, 6] - center_x, center_y, center_z, width, height, length
-        Returns:
-            IoU values [N]
-        """
-        # Convert center+size to min+max coordinates
-        box1_min = box1[:, :3] - box1[:, 3:] / 2  # [1, 3]
-        box1_max = box1[:, :3] + box1[:, 3:] / 2  # [1, 3]
+    iou_matrix = torch.zeros(N, M, device=pred_boxes.device)
 
-        boxes2_min = boxes2[:, :3] - boxes2[:, 3:] / 2  # [N, 3]
-        boxes2_max = boxes2[:, :3] + boxes2[:, 3:] / 2  # [N, 3]
+    for i in range(N):
+        for j in range(M):
+            iou_matrix[i, j] = box3d_iou_single(pred_boxes[i], gt_boxes[j])
 
-        # Calculate intersection
-        inter_min = torch.max(box1_min, boxes2_min)  # [N, 3]
-        inter_max = torch.min(box1_max, boxes2_max)  # [N, 3]
+    return iou_matrix
 
-        # Check if there's intersection
-        inter_size = torch.clamp(inter_max - inter_min, min=0)  # [N, 3]
-        inter_volume = inter_size.prod(dim=1)  # [N]
 
-        # Calculate volumes
-        box1_volume = box1[:, 3:].prod(dim=1)  # [1]
-        boxes2_volume = boxes2[:, 3:].prod(dim=1)  # [N]
+def box3d_iou_single(box1, box2):
+    """
+    Compute IoU between two axis-aligned 3D boxes
+    Args:
+        box1, box2: [6] tensor [x_min, y_min, z_min, x_max, y_max, z_max]
+    Returns:
+        iou: scalar IoU
+    """
+    # Intersection box
+    inter_min = torch.max(box1[:3], box2[:3])
+    inter_max = torch.min(box1[3:], box2[3:])
+    inter_dim = (inter_max - inter_min).clamp(min=0)
+    inter_vol = inter_dim.prod()
 
-        # Calculate IoU
-        union_volume = box1_volume + boxes2_volume - inter_volume
-        iou = inter_volume / (union_volume + 1e-8)
+    # Volumes
+    vol1 = (box1[3:] - box1[:3]).prod()
+    vol2 = (box2[3:] - box2[:3]).prod()
 
-        return iou
+    union_vol = vol1 + vol2 - inter_vol + 1e-8
+    iou = inter_vol / union_vol
+    return iou
 
-    def get_bbox_params(self, bbox_pred):
-        """
-        Extract individual bbox parameters (axis-aligned boxes)
-        Args:
-            bbox_pred: [batch_size, max_bbox_len, 6] or [max_bbox_len, 6]
-        Returns:
-            Dictionary with individual parameters
-        """
-        if bbox_pred.dim() == 2:
-            bbox_pred = bbox_pred.unsqueeze(0)
 
-        return {
-            "center_x": bbox_pred[..., 0],
-            "center_y": bbox_pred[..., 1],
-            "center_z": bbox_pred[..., 2],
-            "width": bbox_pred[..., 3],
-            "height": bbox_pred[..., 4],
-            "length": bbox_pred[..., 5],
-        }
+def match_boxes(pred_boxes, gt_boxes):
+    """
+    Match predicted boxes to GT boxes using Hungarian matching on IoU
+    Args:
+        pred_boxes: [N, 6] tensor
+        gt_boxes: [M, 6] tensor
+    Returns:
+        matched_pred_indices: list of indices into pred_boxes
+        matched_gt_indices: list of indices into gt_boxes
+    """
+    iou_matrix = compute_3d_iou_matrix(pred_boxes, gt_boxes)  # [N, M]
+    cost_matrix = 1.0 - iou_matrix.cpu().numpy()  # Hungarian minimizes cost
 
-    def get_bbox_corners(self, bbox_pred):
-        """
-        Get 8 corner coordinates for axis-aligned 3D boxes
-        Args:
-            bbox_pred: [batch_size, max_bbox_len, 6] or [max_bbox_len, 6]
-        Returns:
-            corners: [..., 8, 3] - 8 corner coordinates for each box
-        """
-        params = self.get_bbox_params(bbox_pred)
+    pred_inds, gt_inds = linear_sum_assignment(cost_matrix)
 
-        # Half dimensions
-        hw = params["width"] / 2
-        hh = params["height"] / 2
-        hl = params["length"] / 2
+    return pred_inds, gt_inds, iou_matrix[pred_inds, gt_inds]  # optional: return matched IoUs
 
-        # 8 corners of axis-aligned box
-        corners = torch.stack(
-            [
-                torch.stack(
-                    [
-                        params["center_x"] - hw,
-                        params["center_y"] - hh,
-                        params["center_z"] - hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] + hw,
-                        params["center_y"] - hh,
-                        params["center_z"] - hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] + hw,
-                        params["center_y"] + hh,
-                        params["center_z"] - hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] - hw,
-                        params["center_y"] + hh,
-                        params["center_z"] - hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] - hw,
-                        params["center_y"] - hh,
-                        params["center_z"] + hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] + hw,
-                        params["center_y"] - hh,
-                        params["center_z"] + hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] + hw,
-                        params["center_y"] + hh,
-                        params["center_z"] + hl,
-                    ],
-                    dim=-1,
-                ),
-                torch.stack(
-                    [
-                        params["center_x"] - hw,
-                        params["center_y"] + hh,
-                        params["center_z"] + hl,
-                    ],
-                    dim=-1,
-                ),
-            ],
-            dim=-2,
+
+
+if __name__=="__main__":
+    #  assume bbox in format [center_x, center_y, center_z, width, height, length]
+    builder = BBox3DPredictor()
+    target=torch.randn(2,3,6)
+    vision_features=torch.randn(2, 256, 3072)
+    text_features=torch.randn(2, 765, 3072)
+    predictions=builder.predict_bboxes(vision_features,text_features)
+    masks = torch.ones(2, 3, dtype=torch.bool)
+    bbox_loss = builder.compute_bbox_loss(
+            predictions, target, masks
         )
-
-        return corners
-
-
-# Example usage with GT format conversion and normalization
-if __name__ == "__main__":
-    print("=== BBox Format Conversion and Normalization ===")
-
-    # Initialize model with normalization enabled
-    coord_bounds = {
-        "x_min": -10.0,
-        "x_max": 10.0,
-        "y_min": -10.0,
-        "y_max": 10.0,
-        "z_min": -5.0,
-        "z_max": 5.0,
-    }
-
-    model = BBox3DHead(
-        input_dim=6144,
-        hidden_dim=512,
-        num_classes=10,
-        max_bbox_len=9,
-        normalize_coords=True,
-        coord_bounds=coord_bounds,
-    )
-    inp=torch.rand(2,6144)
-    output=model(inp)
-    print("output",output)
-
-    
+    # print(predictions.shape)
+    # print("predictions",predictions.shape)
+    # vision_features torch.Size([2, 256, 3072]) text_features torch.Size([2, 765, 3072])

@@ -5,7 +5,7 @@ from typing import List
 
 class QA3DDataset(Dataset):
     def __init__(self, data=None):
-        image_tensor = torch.randn(1,32, 256, 256)  # Simulated image tensor
+        image_tensor = torch.randn(1,32, 256, 256)  
         sample = {
             'image': image_tensor,
             'questions': [
@@ -17,10 +17,47 @@ class QA3DDataset(Dataset):
                 },
                 {
                     'question': "What are the 3D coordinates of the car?",
-                    'answer': "[[2.5, 1.2, 0.8, 4.2, 1.8, 2.3],[2.0, 1.2, 0.8, 4.2, 1.8, 1.5]]", 
+                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]", 
                     'answer_type': 'bbox_3d',
-                    'bbox_3d':[[2.5, 1.2, 0.8, 4.2, 1.8, 2.3],[2.0, 1.2, 0.8, 4.2, 1.8, 1.5]]
+                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
                 }
+                 {
+                    'question': "What color is the car?",
+                    'answer': "Red",
+                    'answer_type': 'text',
+                    'bbox_3d': None
+                },
+                {
+                    'question': "What are the 3D coordinates of the car?",
+                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]", 
+                    'answer_type': 'bbox_3d',
+                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
+                }
+                 {
+                    'question': "What color is the bike?",
+                    'answer': "Red",
+                    'answer_type': 'text',
+                    'bbox_3d': None
+                },
+                {
+                    'question': "What are the 3D coordinates of the bike?",
+                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]", 
+                    'answer_type': 'bbox_3d',
+                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
+                }
+                 {
+                    'question': "What color is the board?",
+                    'answer': "Red",
+                    'answer_type': 'text',
+                    'bbox_3d': None
+                },
+                {
+                    'question': "What are the 3D coordinates of the baord?",
+                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]", 
+                    'answer_type': 'bbox_3d',
+                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
+                }
+
               
             ]
         }
@@ -47,14 +84,13 @@ class QA3DDataset(Dataset):
         return item 
 
 class BboxAwareCollator:
-    def __init__(self, tokenizer, max_length=512, max_bbox_length=9):
+    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.max_bbox_length = max_bbox_length
+        self.image_tk=f"<image_context> {'<image>'*num_vision_token} <image_context>"
 
-        special_tokens = ["<bbox>", "</bbox>", "<x>", "</x>", "<y>", "</y>", "<z>", "</z>"]
-        self.tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
-      
+    # Convert to 1D tensor
     def pad_bboxes_to_fixed_size(self, bboxes: List[List[float]], target_size: int) -> List[List[float]]:
         """Pad or truncate bboxes to fixed size"""
         if len(bboxes) >= target_size:
@@ -98,10 +134,6 @@ class BboxAwareCollator:
             images.append(sample['image'])
             answer_types.append(sample['answer_type'])
             
-            # Create input text (question only for generation)
-            question_text = f"Question: {sample['question']} Answer:"
-            
-            # Create full text (question + answer for training)
             if sample['answer_type'] in ['bbox_3d'] and sample.get('bbox_3d') is not None:
                 bbox_data = sample['bbox_3d'] 
 
@@ -110,14 +142,16 @@ class BboxAwareCollator:
                 bbox_mask=self.create_bbox_attention_mask(len(bbox_data), self.max_bbox_length)
                 
                 formatted_answer = self.format_bbox_answer(bbox_data, sample['answer_type'])
-                full_text = f"Question: {sample['question']} Answer: {formatted_answer}"
                 
             else:
-                full_text = f"Question: {sample['question']} Answer: {sample['answer']}"
+                formatted_answer = sample['answer']
+                full_text = f"Question: {sample['question']} Answer: {formatted_answer}"
                 bbox_gt=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
                 bbox_mask=self.create_bbox_attention_mask(0, self.max_bbox_length)
-            bbox_gts.append(bbox_gt)
-            bbox_masks.append(bbox_mask)
+            question_text = f"Question: {sample['question']} Answer:"
+            full_text = f"{question_text} {self.image_tk} Answer: {formatted_answer}"
+            bbox_gts.append(torch.tensor(bbox_gt, dtype=torch.float32))
+            bbox_masks.append(torch.tensor(bbox_mask, dtype=torch.bool))
             encoded = self.tokenizer(
                 full_text,
                 max_length=self.max_length,
@@ -129,15 +163,12 @@ class BboxAwareCollator:
             input_ids.append(encoded['input_ids'].squeeze(0))
             attention_masks.append(encoded['attention_mask'].squeeze(0))
             
-            # Create labels (mask question part, only train on answer)
-            question_encoded = self.tokenizer(question_text, add_special_tokens=False)
-            question_length = len(question_encoded['input_ids'])
             
             label = encoded['input_ids'].clone().squeeze(0)
-            label[:question_length] = -100  # Ignore question tokens in loss
+            question_len = len(self.tokenizer(question_text, return_tensors="pt")["input_ids"][0])
+            label[:question_len] = -100
             labels.append(label)
         
-        # Create position_ids with correct batch size
         position_ids = torch.arange(0, self.max_length).expand(len(batch), -1).long()
         
         return {
@@ -147,7 +178,6 @@ class BboxAwareCollator:
             'labels': torch.stack(labels),
             'bbox_gts': torch.stack([torch.tensor(b) for b in bbox_gts]),
             'bbox_masks': torch.stack([torch.tensor(b) for b in bbox_masks]),
-            'answer_types': answer_types,
             'position_ids': position_ids   
         }
     
