@@ -398,18 +398,20 @@ def combine_to_3d_bbox(boxes_2d, slice_positions, img_width=None, img_height=Non
 
 
 def convert_list_slice_paths_to_3d(list_slice_paths):
-    slice_stack=[]
+    slice_stack = []
+
     for slice_path in list_slice_paths:
-        if slice_path.split("/")[-1].split(".")[1]=="pkl":
+        if slice_path.endswith(".pkl"):
             with open(slice_path, "rb") as f:
-                # slice_stack.append(pickle.load(f))
-                slice=pickle.load(f)
-                if slice.shape[-1]==3:
-                    # slice_stack=np.concatenate(slice_stack, axis=2)
-                    slice=rgb_to_grayscale(slice)
-                slice_stack.append(slice)
+                slice_data = pickle.load(f)
+
+                if slice_data.shape[-1] == 3:
+                    slice_data = rgb_to_grayscale(slice_data)
+
+                slice_stack.append(slice_data)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Unsupported file type: {slice_path}")
+
     return np.stack(slice_stack, axis=0)
 
 def show_rgb_slices(data, num_slices=5, figsize=(15, 5), normalize=True, save_path=None, show=True):

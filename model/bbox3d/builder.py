@@ -178,8 +178,8 @@ class BBox3DPredictor(nn.Module):
 
             #  Compute regression loss (center format vs center format)
             loss = F.smooth_l1_loss(top_pred.unsqueeze(0), best_gt.unsqueeze(0))
-            total_loss += loss
-
+            # total_loss += loss
+            losses.append(loss)
         return torch.stack(losses).sum()
 
 

@@ -70,7 +70,6 @@ class TracDataset(Dataset):
             os.path.join(data_dir, record) for record in os.listdir(data_dir)
         ]
 
-        data
         self.qa_banks=[]
         qa_maps={
             "Q1":"A1",
@@ -81,7 +80,6 @@ class TracDataset(Dataset):
         for path in data_paths:
             with open(path, "r") as f:
                 data = json.load(f)
-                # self.chunk_data.extend(data)
 
             for sample in data:
                 for q,a in qa_maps.items():
@@ -109,9 +107,12 @@ class TracDataset(Dataset):
         patient_id = data_point["Patient ID"]
 
         image_path = [
-            os.path.join(self.image_dir, patient_id, f"{slice}.pkl")
-            for slice in slice_order
+            os.path.join(self.img_dir, patient_id, f"{s}.pkl")
+            for s in slice_order
         ]
+        print("image_path",image_path[0])
+        for path in image_path:
+            assert os.path.exists(path) , f"{path} does not exist"
         image_3d = convert_list_slice_paths_to_3d(image_path)
 
         data_point["image"] = image_3d
@@ -132,6 +133,19 @@ if __name__ == "__main__":
     # )
 
 
-    train_set = TracDataset( tokenizer=tokenizer,mode="train")
-    for i in range(len(train_set)):
-        print(train_set[i])
+    # train_set = TracDataset( tokenizer=tokenizer,mode="train")
+    # for i in range(len(train_set)):
+    #     print(train_set[i])
+
+    sample_dirs="/root/VLMTrac/2d_data/train/image/OAS1_0001"
+    files=[os.path.join(sample_dirs,f) for f in os.listdir(sample_dirs)]
+    
+    def is_pickle_header(path):
+        with open(path, 'rb') as f:
+            first_bytes = f.read(2)
+            print("first_bytes",first_bytes)
+            return first_bytes == b'\x80\x04'  # pickle protocol 4
+
+    print("valid",is_pickle_header(files[0]))
+    sample = convert_list_slice_paths_to_3d(files)
+    print(sample.shape)

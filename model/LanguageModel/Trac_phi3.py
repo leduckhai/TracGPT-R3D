@@ -17,8 +17,8 @@ from transformers import (
     AutoModelForCausalLM,
     Phi3Model,
     Phi3ForCausalLM,
+    PretrainedConfig,
 )
-
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.generation.utils import GenerateOutput
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -142,9 +142,6 @@ class TracPhi3Model(Phi3Model):
         self.multimodal_processor = MultimodalProcessor(
             self.vision_encoder, self.multimodal_config.img_token_id
         )
-        # self.multimodal_processor.set_image_tokens(
-        #     self.multimodal_config.img_token_id,
-        # )
 
     def initialize_multimodal_components(self):
         """Initialize all multimodal components"""
@@ -164,19 +161,30 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
     """Trac Phi3 for causal language modeling with 3D bbox prediction"""
 
     config_class = TracPhi3Config
+    _model_cache = {}
 
     def __init__(self, config: TracPhi3Config):
+        print("init Tracphi3")
         super().__init__(config)
-        self.model = TracPhi3Model(config)
+        self.model = self.init_model(config)
+        print("finish init base model")
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.post_init()
+
+    @classmethod
+    def init_model(cls, config):
+        key = id(config)  # use object identity for cache key
+        if key not in cls._model_cache:
+            if not isinstance(config, PretrainedConfig):
+                raise ValueError("config must be an instance of PretrainedConfig")
+            cls._model_cache[key] = TracPhi3Model(config)
+        return cls._model_cache[key]
 
     def get_model(self):
         return self.model
 
     def all_to_device(self, device="cuda"):
-        """Move all components to device"""
         self.model.to(device)
         if self.model.vision_encoder.vision_tower:
             self.model.vision_encoder.vision_tower.to(device)
@@ -202,6 +210,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         labels: Optional[torch.LongTensor] = None,
         attention_masks: Optional[torch.Tensor] = None,
         enable_bboxes: bool = True,
+        output_hidden_states: bool = True,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
@@ -225,6 +234,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
             inputs_embeds=inputs_embeds,
             attention_mask=attention_masks,
             labels=labels,
+            output_hidden_states=output_hidden_states,
             **{k: v for k, v in kwargs.items() if k not in ["input_ids"]},
         )
 
@@ -240,15 +250,16 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
     ):
         """Handle 3D bounding box prediction"""
         print("handle bbox prediction")
-        vision_features = image_features[bbox_samples]
-        text_features = outputs.hidden_states[-1][bbox_samples]
+
+        # Dependency injection
+        predictor = self.model.bbox3d_predictor.predict_bboxes
+        compute_bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss
 
         if bbox_masks == None and bbox_gts == None:
-            print("predice bbox mode")
-
-            bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
-                vision_features, text_features
-            )
+            print("no grouth truth or mask, predice bbox mode")
+            vision_features = image_features
+            text_features = outputs.hidden_states[-1]
+            bbox_predictions = predictor(vision_features, text_features)
             outputs["bbox_3d_pred"] = bbox_predictions
         else:
             print("normal mode")
@@ -261,13 +272,11 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
             targets = bbox_gts[bbox_samples]
             masks = bbox_masks[bbox_samples]
 
-            bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
-                vision_features, text_features
-            )
+            vision_features = image_features[bbox_samples]
+            text_features = outputs.hidden_states[-1][bbox_samples]
+            bbox_predictions = predictor(vision_features, text_features)
 
-            bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss(
-                bbox_predictions, targets, masks
-            )
+            bbox_loss = compute_bbox_loss(bbox_predictions, targets, masks)
 
             # Add to outputs
             outputs.loss = outputs.loss + bbox_loss
@@ -279,7 +288,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
     @torch.no_grad()
     def generate(
         self,
-        inputs: Optional[torch.Tensor] = None,
+        input_ids: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
         bbox3d_enable: bool = False,
         **kwargs,
@@ -295,10 +304,10 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         else:
             kwargs["inputs_embeds"] = self.model.embed_tokens(inputs)
 
-        if bbox3d_enable and images is not None:
-            return self._generate_with_bbox(images, **kwargs)
-        else:
-            return super().generate(**kwargs)
+        outputs = super().generate(
+            output_hidden_states=False, return_dict_in_generate=True**kwargs
+        )
+        return outputs
 
     def _generate_with_bbox(self, images, **kwargs):
         """Generate with 3D bbox prediction enabled"""
@@ -317,20 +326,16 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         last_tensors = [step[-1] for step in outputs.hidden_states]
         last_hidden_state = torch.cat(last_tensors[1:], dim=1)
 
-        # Find bbox tokens
         bbox_token_mask = (
             outputs.sequences[:, 1:] == self.config.multimodal.bbox3d_token_id
         )
 
-        # Extract bbox features
         bbox_prompts = self.model.bbox3d_predictor.extract_bbox_features(
             last_hidden_state, bbox_token_mask
         )
 
-        # Predict bboxes
         logits = self.model.bbox3d_predictor.bbox3d_head(images, bbox_prompts)
 
-        # Mask samples without bbox tokens
         no_bbox_ids = [
             i for i, mask in enumerate(bbox_token_mask) if not torch.sum(mask)
         ]
@@ -340,7 +345,6 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         return logits
 
 
-# Registration
 from transformers import AutoConfig, AutoModelForCausalLM
 
 AutoConfig.register("trac-phi3", TracPhi3Config)
@@ -365,7 +369,6 @@ if __name__ == "__main__":
 
     # tokenizer.add_special_tokens({'additional_special_tokens': special_tokens})
 
-    # tokenizer.add_tokens("[SEG]")
     image_token_name = "<im_patch>"
 
     for tk in special_tokens:
@@ -409,6 +412,8 @@ if __name__ == "__main__":
 
         if i == 0:
             print("forward pass")
+            print("mask", bbox_mask)
+            print("gt", bbox_gt)
             outputs = model(
                 input_ids=input_ids,
                 images=images,
