@@ -230,13 +230,19 @@ if __name__ == "__main__":
     ds= QA3DDataset()
     print("Dataset length:", len(ds))
     tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-    dl= torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=BboxAwareCollator(tokenizer=tokenizer))
+    img_token_name="<im_patch>"
+    dl= torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=BboxAwareCollator(tokenizer=tokenizer,token_name=img_token_name))
+    tokenizer.add_tokens(img_token_name)
+    img_id= tokenizer.convert_tokens_to_ids(img_token_name)
+    print("img id",img_id)
     for batch in dl:
         images, input_ids, attention_mask, labels, bbox_gt, bbox_mask,position_ids = batch.values()
         print("images shape:", images.shape)
         print("input_ids shape:", input_ids.shape)
         print("attention_mask shape:", attention_mask.shape)
         print("labels shape:", labels.shape)
-        print("bbox_3d_gt shape:", bbox_gt.shape, bbox_gt)
         print("bbox_3d_mask shape:", bbox_mask.shape)
         print("position_ids shape:", position_ids.shape)
+        print("input ids",input_ids)
+        print("input id", (input_ids==img_id).sum().item())
+        break

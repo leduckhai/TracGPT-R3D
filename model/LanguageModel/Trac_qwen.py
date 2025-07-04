@@ -139,9 +139,7 @@ class TracPhi3Model(Phi3Model):
         self.multimodal_config = config.multimodal
         self.vision_encoder = VisionEncoder()
         self.bbox3d_predictor = BBox3DPredictor()
-        self.multimodal_processor = MultimodalProcessor(
-            self.vision_encoder, self.multimodal_config.img_token_id
-        )
+        self.multimodal_processor = MultimodalProcessor(self.vision_encoder, self.multimodal_config.img_token_id)
         # self.multimodal_processor.set_image_tokens(
         #     self.multimodal_config.img_token_id,
         # )
@@ -196,83 +194,92 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         input_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         images: Optional[torch.FloatTensor] = None,
-        image_features: Optional[torch.FloatTensor] = None,
+        image_features:Optional[torch.FloatTensor] = None,
         bbox_gts: Optional[torch.FloatTensor] = None,
         bbox_masks: Optional[torch.BoolTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         attention_masks: Optional[torch.Tensor] = None,
-        enable_bboxes: bool = True,
-        **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         pre_input_ids = input_ids
 
-        if inputs_embeds == None:
+        if inputs_embeds==None:
 
-            (inputs_embeds, labels, image_features) = (
-                self.prepare_inputs_for_multimodal(
-                    input_ids,
-                    images,
-                    labels=labels,
-                )
+            (
+                labels,inputs_embeds,image_features
+            ) = self.prepare_inputs_for_multimodal(
+                input_ids,
+                images,
+                labels=labels,
             )
-        print("label", labels.shape)
-        print("input", inputs_embeds.shape)
-        print("attention", attention_masks.shape)
-
+       
         outputs = super().forward(
             input_ids=None,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_masks,
             labels=labels,
-            **{k: v for k, v in kwargs.items() if k not in ["input_ids"]},
+            output_hidden_states=self.model.bbox3d_predictor.enabled,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["position_ids", "past_key_values"]
+            },
         )
-
-        if enable_bboxes:
+        
+        if (
+            self.model.bbox3d_predictor.enabled
+            and bbox_gts is not None
+            and bbox_masks is not None
+        ):
             outputs = self._handle_bbox_prediction(
                 outputs, image_features, bbox_gts, bbox_masks
             )
 
         return outputs
 
-    def _handle_bbox_prediction(
-        self, outputs, image_features, bbox_gts=None, bbox_masks=None
-    ):
+    def _handle_bbox_prediction(self, outputs, image_features, bbox_gts, bbox_masks):
         """Handle 3D bounding box prediction"""
-        print("handle bbox prediction")
+        if not bbox_masks.any():
+            return outputs
+
+        bbox_samples = bbox_masks.any(dim=1)
+        if not bbox_samples.any():
+            print("No valid bbox samples found.")
+            return outputs
+        print(
+            "image_features",
+            image_features.shape,
+            "bbox_samples",
+            bbox_samples.shape,
+            bbox_samples,
+        )
         vision_features = image_features[bbox_samples]
         text_features = outputs.hidden_states[-1][bbox_samples]
+        targets = bbox_gts[bbox_samples]
+        masks = bbox_masks[bbox_samples]
 
-        if bbox_masks == None and bbox_gts == None:
-            print("predice bbox mode")
+        # Predict bboxes
+        print(
+            "vision_features",
+            vision_features.shape,
+            "text_features",
+            text_features.shape,
+        )
+        bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
+            vision_features, text_features
+        )
 
-            bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
-                vision_features, text_features
-            )
-            outputs["bbox_3d_pred"] = bbox_predictions
-        else:
-            print("normal mode")
+        # Compute loss
+        print("target", targets.shape, "mask", masks.shape,targets,"mask",masks)
+        bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss(
+            bbox_predictions, targets, masks
+        )
 
-            bbox_samples = bbox_masks.any(dim=1)
-            if not bbox_samples.any():
-                print("No valid bbox samples found.")
-                return outputs
-
-            targets = bbox_gts[bbox_samples]
-            masks = bbox_masks[bbox_samples]
-
-            bbox_predictions = self.model.bbox3d_predictor.predict_bboxes(
-                vision_features, text_features
-            )
-
-            bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss(
-                bbox_predictions, targets, masks
-            )
-
-            # Add to outputs
-            outputs.loss = outputs.loss + bbox_loss
-            outputs["bbox_3d_loss"] = bbox_loss
-            outputs["bbox_3d_pred"] = bbox_predictions
+        # Add to outputs
+        outputs.loss = outputs.loss + bbox_loss
+        if hasattr(outputs, "__dict__"):
+            outputs.bbox_3d_loss = bbox_loss
+            outputs.bbox_3d_pred = bbox_predictions
 
         return outputs
 
@@ -354,29 +361,30 @@ if __name__ == "__main__":
 
     model_max_length = 512
     tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-
+    
     special_tokens = [
         "<im_patch>",
-        "<bx_start>",
+        "<bx_start>", 
         "<bx_end>",
         "<image>",
-        "<image_newline>",
+        "<image_newline>"
     ]
 
-    # tokenizer.add_special_tokens({'additional_special_tokens': special_tokens})
-
-    # tokenizer.add_tokens("[SEG]")
-    image_token_name = "<im_patch>"
-
-    for tk in special_tokens:
-        tokenizer.add_tokens(tk)
-
+    if hasattr(tokenizer, 'add_special_tokens'):
+        num_added = tokenizer.add_special_tokens({'additional_special_tokens': special_tokens})
+        print(f"Added {num_added} new special tokens")
+    else:
+        print("Warning: Tokenizer doesn't support adding special tokens")
+    
+    image_token_name="<im_patch>" \
+    ""
+    tokenizer.add_tokens("[SEG]")
     collator = BboxAwareCollator(
         tokenizer=tokenizer,
         max_length=model_max_length,
         max_bbox_length=9,
         num_vision_token=256,
-        token_name=image_token_name,
+        token_name=image_token_name
     )
 
     ds = QA3DDataset()
@@ -389,7 +397,7 @@ if __name__ == "__main__":
     model = TracPhi3ForCausalLM(config)
     model.get_model().initialize_multimodal_components()
     model = model.to("cuda")
-    for i, batch in enumerate(dl):
+    for  i, batch in enumerate(dl):
         (
             images,
             input_ids,
@@ -407,7 +415,7 @@ if __name__ == "__main__":
         bbox_mask = bbox_mask.to("cuda")
         position_ids = position_ids.to("cuda")
 
-        if i == 0:
+        if i==0:
             print("forward pass")
             outputs = model(
                 input_ids=input_ids,
@@ -417,10 +425,11 @@ if __name__ == "__main__":
                 labels=labels,
                 attention_masks=attention_mask,
                 position_ids=position_ids,
-            )
-        elif i == 1:
+         )
+        elif i==1:
             print("generation")
             outputs = model.generate(input_ids=input_ids, images=images)
+       
 
         # outputs = model(
         #     input_ids=input_ids,
