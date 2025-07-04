@@ -13,3 +13,5 @@ VLMTrac
 **/*.gz
 
 output
+
+TracData

@@ -141,35 +141,54 @@ def process_data():
             print("call save")                    
             with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
                 json.dump(patient_chunks, f)
-            return 
     print("target_root", target_root)
 
 def merge_A3_data(list_A3):
     result = defaultdict(int)
-    for s in list_A3:
-        try:
-            pairs = [pair.strip() for pair in s.split(",")]
+    try:
+        if not list_A3:
+            return ""
+        for s in list_A3:
+                pairs = [pair.strip() for pair in s.split(",")]
 
-            result = {}
-            for pair in pairs:
-                key, value = pair.split("=")
-                result[key.strip()] = max(
-                    result.get(key.strip(), 0), int(value.strip())
-                )
-        except Exception as e:
-            print("error merge_A3", s)
-            print(e)
-    output_str = ", ".join([f"{key}={value}" for key, value in result.items()])
-    return output_str
+                result = {}
+                for pair in pairs:
+                    key, value = pair.split("=")
+                    result[key.strip()] = max(
+                        result.get(key.strip(), 0), int(value.strip())
+                    )
+        output_str = ", ".join([f"{key}={value}" for key, value in result.items()])
+        return output_str
+    except Exception as e:
+        print("error merge_A3", s)
+        print(e)
+        return ""
 
 
 def merge_A4_data(list_A4):
-    degree = ["Non-Dementia", "Mild-Dementia", "Moderate-Dementia"]
-    for i in range(len(degree) - 1, -1, -1):
-        if any(degree[i] in s for s in list_A4):
-            return degree[i]
-    print("not found A4")
-    return "Non-Dementia"
+    try:
+        degree = ["Non-Dementia", "Mild-Dementia", "Moderate-Dementia"]
+        
+        # Handle None or empty input
+        if not list_A4:  # Catches None, [], etc.
+            print("Warning: Empty A4 list, defaulting to Non-Dementia")
+            return "Non-Dementia"
+        
+        # Ensure list_A4 contains strings (safe iteration)
+        cleaned_list = [str(s) for s in list_A4 if s is not None]
+        
+        # Check from most severe to least
+        for level in reversed(degree):
+            if any(level in s for s in cleaned_list):
+                return level
+        
+        print("No dementia level found in A4, defaulting to Non-Dementia")
+        return "Non-Dementia"
+        
+    except Exception as e:
+        print(f"Error processing A4: {str(e)}")
+        print(f"Problematic A4 list: {list_A4}")
+        return "Error A4"
 
 
 def merge_A2_data(s):
@@ -189,17 +208,25 @@ def merge_A2_data(s):
 
 
 def merge_A1_data(list_A1):
-    bbox_input = []
-    for bboxes_ls in list_A1:
-        parsed = ast.literal_eval(bboxes_ls)
-        bbox_input.append(parsed)
+        bbox_input = []
+        for bboxes_ls in list_A1:
+            if bboxes_ls:
+                try:
+                    parsed = ast.literal_eval(bboxes_ls)
+                except Exception as e:
+                    print("error convert to bbox_A1")
+                    print(e)
+                    continue
+                
+                bbox_input.append(parsed)
 
-    if num_concat!=-1:
-        param_num_concat = num_concat
-    else:
-        param_num_concat = len(bbox_input)
-    output = group_and_merge_3d_bboxes_v2(bboxes_slice=bbox_input,num_concat=param_num_concat)
-    return output
+        if num_concat!=-1:
+            param_num_concat = num_concat
+        else:
+            param_num_concat = len(bbox_input)
+        output = group_and_merge_3d_bboxes_v2(bboxes_slice=bbox_input,num_concat=param_num_concat)
+    
+        return output
 
 
 def save_dsc_data(save_path="desc.json"):
