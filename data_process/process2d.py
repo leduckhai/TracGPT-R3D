@@ -10,7 +10,7 @@ import shutil
 from collections import defaultdict
 import json 
 
-ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v3")
+ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v6")
 output_folder="./clean_data"
 
 if os.path.exists(output_folder):

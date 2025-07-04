@@ -12,7 +12,7 @@ from util import sort_files
 import uuid
 import nibabel as nib
 import math
-from util import group_and_merge_3d_bboxes_v2
+from util import group_and_merge_3d_bboxes_v2,group_files
 import ast
 
 dsc_path = "data_process/desc.json"
@@ -29,7 +29,6 @@ target_root = "/home/ducnguyen/sync_local/repo/TracGPT/clean_data_3d"
 target_root = os.path.join(target_root, f"{num_concat}_{tag}_slices", f"{uid}")
 print("target root", target_root)
 splits = ["train", "test"]
-
 
 def rgb_to_grayscale(img_rgb):
     """Convert (H, W, 3) RGB to (H, W) grayscale using standard weights."""
@@ -66,36 +65,28 @@ def process_data():
         source_data = os.path.join(source_dir, "data")
 
         save_split_dir = os.path.join(target_root, split)
-        save_img_dir = os.path.join(save_split_dir, "image")
-        save_annot_dir = os.path.join(save_split_dir, "image_with_bboxes")
-        save_pick_dir = os.path.join(save_split_dir, "pick_slides")
         save_data_dir = os.path.join(save_split_dir, "data")
+
+        os.makedirs(save_data_dir, exist_ok=True)
 
         patient_json_files = os.listdir(source_data)
         p_ids = [path.split(".")[0] for path in patient_json_files]
 
         for p_id in tqdm(p_ids):
-            save_img_subdir = os.path.join(save_img_dir, p_id)
-            save_annot_subdir = os.path.join(save_annot_dir, p_id)
-            save_pick_subdir = os.path.join(save_pick_dir, p_id)
-
-            os.makedirs(save_img_subdir, exist_ok=True), os.makedirs(
-                save_img_dir, exist_ok=True
-            )
-            os.makedirs(save_annot_subdir, exist_ok=True)
-            os.makedirs(save_pick_subdir, exist_ok=True)
             os.makedirs(save_data_dir, exist_ok=True)
 
             img_slide_dir = os.path.join(source_img, p_id)
             annot_slide_dir = os.path.join(source_annot, p_id)
 
             slide_base = [f.split(".")[0] for f in os.listdir(img_slide_dir)]
-            slide_base = sort_files(slide_base)
+            slide_subgroups=group_files(slide_base)
+
 
             slide_shape_map = {}
             annot_shape_map = {}
 
             slide_data_map = {}
+
             with open(os.path.join(source_data, f"{p_id}.json"), "rb") as f:
                 data = json.load(f)
 
@@ -105,53 +96,52 @@ def process_data():
                         del d[k]
                 slide_data_map[d["Slide"]] = d
 
-            for slide in slide_base:
-                slide_path = os.path.join(img_slide_dir, f"{slide}.pkl")
-                annot_path = os.path.join(annot_slide_dir, f"{slide}.pkl")
-                with open(slide_path, "rb") as f:
-                    slice_data = pickle.load(f)
-                with open(annot_path, "rb") as f:
-                    annot_data = pickle.load(f)
-                slice_data = rgb_to_grayscale(slice_data)
-                annot_data = rgb_to_grayscale(annot_data)
-
-                slide_shape_map[slide] = slice_data
-                annot_shape_map[slide] = annot_data
-
-            all_shapes = [slice_.shape for slice_ in slide_shape_map.values()]
-            shape_counter = Counter(all_shapes)
-            reference_shape = None
-            max_count = 0
-            for shape, count in shape_counter.items():
-                if count > max_count:
-                    reference_shape = shape
-                    max_count = count
-            keep_slides = [
-                s for s in slide_base if slide_shape_map[s].shape == reference_shape
-            ]
-
-            slide_idx_map = {}
-            for i, slide in enumerate(keep_slides):
-                slide_idx_map[slide] = i
-
             patient_chunks=[]
-            if num_concat == -1:
-                
-                
-                    chunk_slides = keep_slides
-                    chunk_data=merge_slices(chunk_slides,slide_data_map)
-                    patient_chunks.append(chunk_data)
-            else:
-                for i in range(0, len(keep_slides), num_concat):
-                    chunk_slides = keep_slides[i : i + num_concat]
-                    if len(chunk_slides) < num_concat:
-                        continue
-                    chunk_data = merge_slices(chunk_slides, slide_data_map)
-                    patient_chunks.append(chunk_data)
+            for i,subgroup in enumerate(    slide_subgroups):
 
-                
+                for slide in subgroup:
+                    slide_path = os.path.join(img_slide_dir, f"{slide}.pkl")
+                    annot_path = os.path.join(annot_slide_dir, f"{slide}.pkl")
+                    with open(slide_path, "rb") as f:
+                        slice_data = pickle.load(f)
+                    with open(annot_path, "rb") as f:
+                        annot_data = pickle.load(f)
+                    slice_data = rgb_to_grayscale(slice_data)
+                    annot_data = rgb_to_grayscale(annot_data)
+
+                    slide_shape_map[slide] = slice_data
+                    annot_shape_map[slide] = annot_data
+
+                all_shapes = [slice_.shape for slice_ in slide_shape_map.values()]
+                shape_counter = Counter(all_shapes)
+                reference_shape = None
+                max_count = 0
+                for shape, count in shape_counter.items():
+                    if count > max_count:
+                        reference_shape = shape
+                        max_count = count
+                keep_slides = [
+                    s for s in subgroup if slide_shape_map[s].shape == reference_shape
+                ]
+
+
+                if num_concat == -1:
+                            
+                        chunk_slides = keep_slides
+                        chunk_data=merge_slices(chunk_slides,slide_data_map)
+                        patient_chunks.append(chunk_data)
+                else:
+                    for i in range(0, len(keep_slides), num_concat):
+                        chunk_slides = keep_slides[i : i + num_concat]
+                        if len(chunk_slides) < num_concat:
+                            continue
+                        chunk_data = merge_slices(chunk_slides, slide_data_map)
+                        patient_chunks.append(chunk_data)
+
+            print("call save")                    
             with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
                 json.dump(patient_chunks, f)
+            return 
     print("target_root", target_root)
 
 def merge_A3_data(list_A3):
@@ -203,8 +193,7 @@ def merge_A1_data(list_A1):
     for bboxes_ls in list_A1:
         parsed = ast.literal_eval(bboxes_ls)
         bbox_input.append(parsed)
-    # if num_concat == -1:
-    #     num_concat = len(bbox_input)
+
     if num_concat!=-1:
         param_num_concat = num_concat
     else:

@@ -9,11 +9,21 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import pdist
 import numpy as np
 import nibabel as nib
+from collections import defaultdict
+
 def rgb_to_grayscale(img_rgb):
     """Convert (H, W, 3) RGB to (H, W) grayscale using standard weights."""
     return np.dot(img_rgb[..., :3], [0.2989, 0.5870, 0.1140]) 
 
 
+
+def group_files(file_list):
+    group=defaultdict(list)
+    sorted = sort_files(file_list)
+    for f in sorted:
+        id= f.split("_")[0].split("-")[1]
+        group[id].append(f)
+    return list(group.values())
 
 def sort_files(file_list):
     def sort_key(filename):
@@ -52,7 +62,7 @@ def calculate_2d_iou_of_multiple_boxes(boxes1, boxes2):
 def group_and_merge_3d_bboxes_v2(bboxes_slice, num_concat=50, 
                                  img_size=None, eps=None, max_objects_k=None,
                                  overlap_threshold=0.8, discard_inner_iou=0.9,
-                                 min_slices=2, continuity_threshold=0.7):
+                                 min_slices=2, continuity_threshold=0.5):
 
     if not bboxes_slice:
         return []
