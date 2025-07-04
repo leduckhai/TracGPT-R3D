@@ -7,12 +7,13 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class MultimodalProcessor(nn.Module):
     """Handles the fusion of text and vision inputs for multimodal processing"""
 
-    def __init__(self, vision_encoder):
+    def __init__(self, vision_encoder, image_token_id: int ):
         super().__init__()
         self.vision_encoder = vision_encoder
-        self.image_token_id = None  # Will be set during initialization
-        self.image_newline_token_id = None
-        self.ignore_idx = -100
+        self.image_token_id = image_token_id  # Will be set during initialization
+        # self.image_newline_token_id = None
+
+        self.ignore_idx = -100  
 
     def set_image_tokens(self, image_token_id: int, image_newline_token_id: int = None):
         """Set the special tokens used for image processing"""
@@ -116,28 +117,11 @@ class MultimodalProcessor(nn.Module):
         print("before image encoder", images.shape)
         image_features = self.vision_encoder.encode_images(images)
         print("image features shape:", image_features.shape)
-        if image_features is None:
-            print("image features is None here ")
-            return self._prepare_text_only_inputs(
-                input_ids,
-                position_ids,
-                attention_mask,
-                past_key_values,
-                labels,
-                embed_tokens_fn,
-            )
+
 
         if self.image_token_id is None or not (input_ids == self.image_token_id).any():
             raise ValueError("No image tokens found in input_ids")
-            return self._prepare_text_only_inputs(
-                input_ids,
-                position_ids,
-                attention_mask,
-                past_key_values,
-                labels,
-                embed_tokens_fn,
-            )
-
+        
         new_input_ids = []
         new_labels = []
         new_inputs_embeds = []
@@ -148,7 +132,7 @@ class MultimodalProcessor(nn.Module):
             cur_input_ids = input_ids[batch_idx]
             cur_labels = labels[batch_idx] if labels is not None else None
             cur_image_features = image_features[batch_idx : batch_idx + 1]
-
+            
             # Process this sample
             _, new_label, new_embed = self._process_single_sample(
                 cur_input_ids, cur_labels, cur_image_features, embed_tokens_fn
@@ -242,22 +226,22 @@ class MultimodalProcessor(nn.Module):
         self, input_ids, labels, image_features, embed_tokens_fn
     ):
         print(
-            "image features shape:",
+            "image features shape _process_signle:",
             image_features.shape,
-            "input_ids shape:",
+            "input_ids shape: _process_signle",
             input_ids.shape,
         )
         # We expect the image_token line consecuively
         image_token_mask = input_ids == self.image_token_id
-        image_token_indices = torch.where(image_token_mask)[0]
-        if len(image_token_indices) == 0:
-            raise ValueError("No image tokens found in input_ids")
-        print("image_token_indices:", image_token_indices)
+        image_token_idx= input_ids == self.image_token_id
+        print("num tokens:", len(image_token_idx))
+        if len(image_token_idx) !=image_features.shape[1]:
+            raise ValueError("number of image tokens not match  in input_ids")
 
-        # Replace image tokens with image features
+
         text_embed= embed_tokens_fn(input_ids)
-        start_idx = image_token_indices[0]
-        end_idx = image_token_indices[-1] + 1
+        start_idx = image_token_idx[0]
+        end_idx = image_token_idx[-1] + 1
         new_embeds = torch.cat(
             [text_embed[:start_idx], image_features.squeeze(0), text_embed[end_idx:]]
         )
@@ -278,84 +262,6 @@ class MultimodalProcessor(nn.Module):
             )
       
         return None, new_labels, new_embeds
-
-    def _process_single_sample_v2(
-        self,
-        input_ids: torch.LongTensor,
-        labels: Optional[torch.LongTensor],
-        image_features: torch.FloatTensor,
-        embed_tokens_fn: callable,
-    ) -> Tuple[torch.LongTensor, Optional[torch.LongTensor], torch.FloatTensor]:
-        """Process a single sample, replacing image tokens with image features"""
-
-        # Find image token positions
-        image_token_mask = input_ids == self.image_token_id
-        image_token_indices = torch.where(image_token_mask)[0]
-
-        if len(image_token_indices) == 0:
-            # No image tokens, return as-is
-            return input_ids, labels, embed_tokens_fn(input_ids)
-
-        # Get text embeddings
-        print("input_ids shape:", input_ids,type(input_ids))
-        text_embeds = embed_tokens_fn(input_ids)
-
-        # Prepare image features for insertion
-        num_image_tokens = image_features.shape[1]  # Number of image patches
-        image_embeds = image_features.squeeze(0)  # Remove batch dimension
-
-        # Process each image token position
-        new_embeds_list = []
-        new_ids_list = []
-        new_labels_list = []
-
-        prev_idx = 0
-
-        for img_token_idx in image_token_indices:
-            # Add text before image token
-            if img_token_idx > prev_idx:
-                new_embeds_list.append(text_embeds[prev_idx:img_token_idx])
-                new_ids_list.append(input_ids[prev_idx:img_token_idx])
-                if labels is not None:
-                    new_labels_list.append(labels[prev_idx:img_token_idx])
-
-            # Add image embeddings
-            new_embeds_list.append(image_embeds)
-
-            # Create dummy input_ids for image tokens (they won't be used since we have embeddings)
-            img_ids = torch.full(
-                (num_image_tokens,),
-                self.image_token_id,
-                dtype=input_ids.dtype,
-                device=input_ids.device,
-            )
-            new_ids_list.append(img_ids)
-
-            # Handle labels for image tokens
-            if labels is not None:
-                img_labels = torch.full(
-                    (num_image_tokens,),
-                    self.ignore_idx,
-                    dtype=labels.dtype,
-                    device=labels.device,
-                )
-                new_labels_list.append(img_labels)
-
-            prev_idx = img_token_idx + 1
-
-        # Add remaining text after last image token
-        if prev_idx < len(input_ids):
-            new_embeds_list.append(text_embeds[prev_idx:])
-            new_ids_list.append(input_ids[prev_idx:])
-            if labels is not None:
-                new_labels_list.append(labels[prev_idx:])
-
-        # Concatenate all parts
-        final_embeds = torch.cat(new_embeds_list, dim=0)
-        final_ids = torch.cat(new_ids_list, dim=0)
-        final_labels = torch.cat(new_labels_list, dim=0) if labels is not None else None
-
-        return final_ids, final_labels, final_embeds
 
     def get_vision_tower(self):
         """Get the vision tower component"""

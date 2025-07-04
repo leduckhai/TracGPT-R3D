@@ -2,6 +2,8 @@ import torch
 from torch.utils.data import Dataset
 import torch.nn as nn
 from typing import List
+import numpy as np
+import torch.nn.functional as F
 
 class QA3DDataset(Dataset):
     def __init__(self, data=None):
@@ -19,8 +21,8 @@ class QA3DDataset(Dataset):
                     'question': "What are the 3D coordinates of the car?",
                     'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]", 
                     'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                }
+                    'bbox_3d':[[0.2, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
+                },
                  {
                     'question': "What color is the car?",
                     'answer': "Red",
@@ -31,8 +33,8 @@ class QA3DDataset(Dataset):
                     'question': "What are the 3D coordinates of the car?",
                     'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]", 
                     'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                }
+                    'bbox_3d':[[0.1, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
+                },
                  {
                     'question': "What color is the bike?",
                     'answer': "Red",
@@ -44,7 +46,7 @@ class QA3DDataset(Dataset):
                     'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]", 
                     'answer_type': 'bbox_3d',
                     'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                }
+                },
                  {
                     'question': "What color is the board?",
                     'answer': "Red",
@@ -55,7 +57,7 @@ class QA3DDataset(Dataset):
                     'question': "What are the 3D coordinates of the baord?",
                     'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]", 
                     'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
+                    'bbox_3d':[[0.5, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
                 }
 
               
@@ -84,11 +86,12 @@ class QA3DDataset(Dataset):
         return item 
 
 class BboxAwareCollator:
-    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256):
+    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>"):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.max_bbox_length = max_bbox_length
-        self.image_tk=f"<image_context> {'<image>'*num_vision_token} <image_context>"
+        # self.image_tk=f"<image_context>  {token_name*num_vision_token} <image_context>"
+        self.image_tk = f"<image_context> {' '.join([token_name] * num_vision_token)} <image_context>"
 
     # Convert to 1D tensor
     def pad_bboxes_to_fixed_size(self, bboxes: List[List[float]], target_size: int) -> List[List[float]]:
@@ -116,7 +119,7 @@ class BboxAwareCollator:
         
     def create_bbox_attention_mask(self, length: int, max_len: int) -> List[List[bool]]:
         """Create attention mask for padded bboxes"""
-        length=max(length,max_len)
+        length=min(length,max_len)
         mask = [True] * length + [False] * (max_len - length)
         return mask
     
@@ -148,6 +151,7 @@ class BboxAwareCollator:
                 full_text = f"Question: {sample['question']} Answer: {formatted_answer}"
                 bbox_gt=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
                 bbox_mask=self.create_bbox_attention_mask(0, self.max_bbox_length)
+            
             question_text = f"Question: {sample['question']} Answer:"
             full_text = f"{question_text} {self.image_tk} Answer: {formatted_answer}"
             bbox_gts.append(torch.tensor(bbox_gt, dtype=torch.float32))
@@ -181,69 +185,6 @@ class BboxAwareCollator:
             'position_ids': position_ids   
         }
     
-class MultiModalBboxModel(nn.Module):
-    def __init__(self, language_model, vision_encoder, hidden_size=4096):
-        super().__init__()
-        self.language_model = language_model
-        self.vision_encoder = vision_encoder
-        
-        # Auxiliary bbox regression head
-        self.bbox_3d_head = nn.Sequential(
-            nn.Linear(hidden_size, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 9)  # x,y,z,w,h,d,rx,ry,rz
-        )
-        
-        # Coordinate embedding for better numerical understanding
-        self.coord_embed = nn.Embedding(1000, hidden_size // 4)  # For discretized coords
-        
-    def forward(self, images, input_ids, attention_mask, labels=None, 
-                bbox_3d_gt=None, bbox_3d_mask=None, answer_types=None):
-        
-        # Vision encoding
-        vision_features = self.vision_encoder(images)
-        
-        # Main language modeling loss
-        lm_outputs = self.language_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            vision_features=vision_features,
-            labels=labels
-        )
-        
-        outputs = {
-            'lm_loss': lm_outputs.loss,
-            'logits': lm_outputs.logits,
-            'generated_text': None  # Will be filled during inference
-        }
-        
-        # Auxiliary bbox regression loss (helps with coordinate understanding)
-        if bbox_3d_mask is not None and bbox_3d_mask.any():
-            bbox_samples = bbox_3d_mask.bool()
-            bbox_vision_features = vision_features[bbox_samples]
-            
-            # Get text features for bbox questions
-            last_hidden = lm_outputs.hidden_states[-1][bbox_samples] if hasattr(lm_outputs, 'hidden_states') else None
-            
-            if last_hidden is not None:
-                # Combine vision and text features
-                combined_features = torch.cat([
-                    bbox_vision_features.mean(dim=1),  # Pool vision features
-                    last_hidden.mean(dim=1)  # Pool text features
-                ], dim=-1)
-                
-                bbox_pred = self.bbox_3d_head(combined_features)
-                bbox_targets = bbox_3d_gt[bbox_samples]
-                
-                bbox_loss = F.smooth_l1_loss(bbox_pred, bbox_targets)
-                outputs['bbox_3d_loss'] = bbox_loss
-                outputs['bbox_3d_pred'] = bbox_pred
-        
-        return outputs
-    
-
 class BboxPostProcessor:
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -283,56 +224,6 @@ class BboxPostProcessor:
         return False
 
 
-def train_step(model, batch, optimizer, alpha=0.1):
-    """Train with both language modeling and auxiliary bbox loss"""
-    outputs = model(**batch)
-    
-    # Primary loss: language modeling
-    total_loss = outputs['lm_loss']
-    
-    # Auxiliary loss: direct bbox regression (helps numerical understanding)
-    if 'bbox_3d_loss' in outputs:
-        total_loss += alpha * outputs['bbox_3d_loss']
-    
-    total_loss.backward()
-    optimizer.step()
-    optimizer.zero_grad()
-    
-    return {
-        'total_loss': total_loss.item(),
-        'lm_loss': outputs['lm_loss'].item(),
-        'bbox_loss': outputs.get('bbox_3d_loss', torch.tensor(0.0)).item()
-    }
-
-def generate_answer(model, tokenizer, processor, image, question, answer_type):
-    model.eval()
-    
-    # Prepare input
-    prompt = f"Question: {question} Answer:"
-    inputs = processor(image, prompt)
-    
-    with torch.no_grad():
-        # Generate text
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=100,
-            do_sample=True,
-            temperature=0.7
-        )
-        
-        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
-        
-        # Extract coordinates if bbox question
-        if answer_type in ['bbox_2d', 'bbox_3d']:
-            coords = processor.extract_coordinates_from_text(generated_text, answer_type)
-            return {
-                'text': generated_text,
-                'coordinates': coords,
-                'valid': processor.validate_coordinates(coords, answer_type)
-            }
-        
-        return {'text': generated_text}
-
 if __name__ == "__main__":
     from transformers import AutoTokenizer
     from torch.utils.data import DataLoader
@@ -341,12 +232,11 @@ if __name__ == "__main__":
     tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
     dl= torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=BboxAwareCollator(tokenizer=tokenizer))
     for batch in dl:
-        images, input_ids, attention_mask, labels, bbox_gt, bbox_mask, answer_types,position_ids = batch.values()
+        images, input_ids, attention_mask, labels, bbox_gt, bbox_mask,position_ids = batch.values()
         print("images shape:", images.shape)
         print("input_ids shape:", input_ids.shape)
         print("attention_mask shape:", attention_mask.shape)
         print("labels shape:", labels.shape)
         print("bbox_3d_gt shape:", bbox_gt.shape, bbox_gt)
         print("bbox_3d_mask shape:", bbox_mask.shape)
-        print("answer_types:", answer_types)
         print("position_ids shape:", position_ids.shape)

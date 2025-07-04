@@ -139,10 +139,10 @@ class TracPhi3Model(Phi3Model):
         self.multimodal_config = config.multimodal
         self.vision_encoder = VisionEncoder()
         self.bbox3d_predictor = BBox3DPredictor()
-        self.multimodal_processor = MultimodalProcessor(self.vision_encoder)
-        self.multimodal_processor.set_image_tokens(
-            self.multimodal_config.img_token_id,
-        )
+        self.multimodal_processor = MultimodalProcessor(self.vision_encoder, self.multimodal_config.img_token_id)
+        # self.multimodal_processor.set_image_tokens(
+        #     self.multimodal_config.img_token_id,
+        # )
 
     def initialize_multimodal_components(self):
         """Initialize all multimodal components"""
@@ -192,19 +192,18 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
         images: Optional[torch.FloatTensor] = None,
         bbox_gts: Optional[torch.FloatTensor] = None,
         bbox_masks: Optional[torch.BoolTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         attention_masks: Optional[torch.Tensor] = None,
-        answer_types: Optional[List] = None,
-        mode: Optional[str] = "normal",
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         pre_input_ids = input_ids
 
-        if mode == "normal":
+        if inputs_embeds==None:
 
             (
                 input_ids,
@@ -222,9 +221,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
                 past_key_values=kwargs.get("past_key_values"),
                 labels=labels,
             )
-        if image_features is None:
-            print("image feature is none")
-            return
+       
         outputs = super().forward(
             input_ids=None,
             inputs_embeds=inputs_embeds,
@@ -237,7 +234,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
                 if k not in ["position_ids", "past_key_values"]
             },
         )
-        # print("outputs", outputs.shape)
+        
         if (
             self.model.bbox3d_predictor.enabled
             and bbox_gts is not None
@@ -388,6 +385,8 @@ if __name__ == "__main__":
     else:
         print("Warning: Tokenizer doesn't support adding special tokens")
     
+    image_token_name="<im_patch>" \
+    ""
     tokenizer.add_tokens("[SEG]")
     collator = BboxAwareCollator(
         tokenizer=tokenizer,
@@ -399,15 +398,13 @@ if __name__ == "__main__":
     dl = DataLoader(ds, batch_size=2, shuffle=True, collate_fn=collator)
     img_token_id = tokenizer.convert_tokens_to_ids("<im_patch>")
     config = TracPhi3Config(
-        img_token_id=tokenizer.convert_tokens_to_ids("<im_patch>"),
+        img_token_id=tokenizer.convert_tokens_to_ids(image_token_name),
         bbox3d_token_id=tokenizer.convert_tokens_to_ids("<bx_start>"),
     )
-    # model_args.seg_token_id = tokenizer.convert_tokens_to_ids("[SEG]")
-    # model_args.vocab_size = len(tokenizer)
     model = TracPhi3ForCausalLM(config)
     model.get_model().initialize_multimodal_components()
     model = model.to("cuda")
-    for batch in dl:
+    for  i, batch in enumerate(dl):
         (
             images,
             input_ids,
@@ -415,56 +412,31 @@ if __name__ == "__main__":
             labels,
             bbox_gt,
             bbox_mask,
-            answer_types,
             position_ids,
         ) = batch.values()
         images = images.to("cuda")
         input_ids = input_ids.to("cuda")
-        input_ids[:, 2:5] = img_token_id
         attention_mask = attention_mask.to("cuda")
         labels = labels.to("cuda")
         bbox_gt = bbox_gt.to("cuda")
         bbox_mask = bbox_mask.to("cuda")
-        answer_types = answer_types
         position_ids = position_ids.to("cuda")
 
-        outputs = model(
-            input_ids=input_ids,
-            images=images,
-            bbox_gts=bbox_gt,
-            bbox_masks=bbox_mask,
-            labels=labels,
-            attention_masks=attention_mask,
-            answer_types=answer_types,
-            position_ids=position_ids,
-        )
-        # print("outputs:", outputs)
-        break
-
-    for batch in dl:
-        (
-            images,
-            input_ids,
-            attention_mask,
-            labels,
-            bbox_gt,
-            bbox_mask,
-            answer_types,
-            position_ids,
-        ) = batch.values()
-        images = images.to("cuda")
-        input_ids = input_ids.to("cuda")
-        input_ids[:, 2:5] = img_token_id
-        attention_mask = attention_mask.to("cuda")
-        labels = labels.to("cuda")
-        bbox_gt = bbox_gt.to("cuda")
-        bbox_mask = bbox_mask.to("cuda")
-        answer_types = answer_types
-        position_ids = position_ids.to("cuda")
-
-        with torch.no_grad():
-            pass
-            break
+        if i==0:
+            print("forward pass")
+            outputs = model(
+                input_ids=input_ids,
+                images=images,
+                bbox_gts=bbox_gt,
+                bbox_masks=bbox_mask,
+                labels=labels,
+                attention_masks=attention_mask,
+                position_ids=position_ids,
+         )
+        elif i==1:
+            print("generation")
+            outputs = model.generate(input_ids=input_ids, images=images)
+       
 
         # outputs = model(
         #     input_ids=input_ids,

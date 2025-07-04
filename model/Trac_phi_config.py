@@ -50,13 +50,10 @@ class TracPhi3Config(Phi3Config):
         self.multimodal_keys = [
             "vision_tower",
             "bbox3d_token_id",
-            # Projector specific
 
             "img_token_id",
         ]
 
-        # Extract and store multimodal parameters as individual attributes
-        # with default values from MultimodalConfig
         default_multimodal = MultimodalConfig()
 
         for key in self.multimodal_keys:
@@ -66,13 +63,8 @@ class TracPhi3Config(Phi3Config):
             )  # Remove from kwargs to avoid conflicts
             setattr(self, key, value)
 
-        # Initialize parent config (kwargs now clean of multimodal params)
         super().__init__(**kwargs)
         
-
-        # DO NOT store MultimodalConfig object - it causes JSON serialization issues
-        # Instead, we'll reconstruct it on-demand via the multimodal property
-
     @property
     def multimodal(self) -> MultimodalConfig:
         """Get multimodal config object (reconstructed on-demand)"""
@@ -107,7 +99,6 @@ class TracPhi3Config(Phi3Config):
     @classmethod
     def from_dict(cls, config_dict: Dict, **kwargs) -> "TracPhi3Config":
         """Create config from dictionary"""
-        # Merge config_dict and kwargs
         merged_config = {**config_dict, **kwargs}
         return cls(**merged_config)
 

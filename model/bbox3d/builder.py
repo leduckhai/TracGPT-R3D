@@ -90,7 +90,6 @@ class BBox3DPredictor(nn.Module):
 
             return BBox3DLossCalculator()
         except ImportError:
-            # Fallback loss calculator
             return nn.MSELoss()
 
     def extract_bbox_features(
@@ -131,11 +130,11 @@ class BBox3DPredictor(nn.Module):
             vision_pooled = vision_features.mean(dim=1)  # [B, D_v]
             text_pooled = text_features.mean(dim=1)  # [B, D_t]
 
-            print("vision_pooled",vision_pooled.shape)
-            print("text_pooled",text_pooled.shape)
+            # print("vision_pooled",vision_pooled.shape)
+            # print("text_pooled",text_pooled.shape)
             # Combine features
             combined = torch.cat([vision_pooled, text_pooled], dim=-1)
-            print("combined",combined.shape)
+            # print("combined",combined.shape)
             # Predict bboxes
             return self.bbox3d_head(combined)
         except Exception as e:
@@ -150,8 +149,8 @@ class BBox3DPredictor(nn.Module):
         """Compute bbox prediction loss with proper shape handling"""
         bbox_preds = predictions["filtered_bbox_pred"]
         conf_preds = predictions["filtered_conf_pred"]
-        total_loss = torch.tensor(0.0, device=bbox_preds[0].device)
-
+        # total_loss = torch.tensor(0.0, device=bbox_preds[0].device)
+        losses = []
         for b in range(len(bbox_preds)):
             bbox_pred = bbox_preds[b]        # [num_preds, 6], in center format
             conf_pred = conf_preds[b]        # [num_preds]
@@ -181,7 +180,7 @@ class BBox3DPredictor(nn.Module):
             loss = F.smooth_l1_loss(top_pred.unsqueeze(0), best_gt.unsqueeze(0))
             total_loss += loss
 
-        return total_loss
+        return torch.stack(losses).sum()
 
 
 def compute_3d_iou_matrix(pred_boxes, gt_boxes):
@@ -258,6 +257,3 @@ if __name__=="__main__":
     bbox_loss = builder.compute_bbox_loss(
             predictions, target, masks
         )
-    # print(predictions.shape)
-    # print("predictions",predictions.shape)
-    # vision_features torch.Size([2, 256, 3072]) text_features torch.Size([2, 765, 3072])
