@@ -9,20 +9,9 @@ sys.path.append(ROOT)
 from types import SimpleNamespace
 from model.Encoder.vit import ViT3DTower
 
-def build_vision_tower(vision_tower='vit3d'):
-    config = {
-        'in_channels': 1,
-        'img_size': (32, 256, 256),
-        'patch_size': (4, 16, 16),
-        'hidden_size': 2560,
-        'num_heads': 8,
-        'vision_select_layer': -1,
-        'vision_select_feature': "cls_patch"
-    }
-    
-    config = SimpleNamespace(**config)
-
-    if 'vit3d' in vision_tower.lower():
+def build_vision_tower(config):
+  
+    if 'vit3d' in config.vision_tower.lower():
         return ViT3DTower(
             in_channels=config.in_channels,
             img_size=config.img_size,

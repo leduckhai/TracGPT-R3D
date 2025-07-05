@@ -3,72 +3,60 @@ import torch.nn as nn
 import torch.nn.functional as F
 from types import SimpleNamespace
 
-def build_bbox3d_module():
-    """
-    Build the 3D Bounding Box prediction module based on configuration
-    Args:
-        config: Configuration object containing model parameters
-    Returns:
-        BBox3DHead instance
-    """
- 
-    return BBox3DHead()
-
 
 class BBox3DHead(nn.Module):
     """3D Bounding Box prediction head with dynamic output capability"""
 
     def __init__(
         self,
-        input_dim: int=6144,
-        hidden_dim: int = 512,
-        num_classes: int = 1,
-        max_bbox_len: int = 9,
-        normalize_coords: bool = True,
-        coord_bounds: dict = None,
+        config: SimpleNamespace,
+        # input_dim: int=6144,
+        # hidden_dim: int = 512,
+        # num_classes: int = 1,
+        # max_bbox_len: int = 9,
+        # normalize_coords: bool = True,
+        # coord_bounds: dict = None,
     ):
         super().__init__()
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.num_classes = num_classes
-        self.max_bbox_len = max_bbox_len
-        self.normalize_coords = normalize_coords
-
+        self.input_dim =config.input_dim
+        self.hidden_dim = config.hidden_dim
+        self.num_classes = config.num_classes
+        self.max_bbox_len = config.max_bbox_len
+        self.normalize_coords = config.normalize_coords
+        # self.coord_bounds = config.coord_bounds
         # Default coordinate bounds for normalization
-        if coord_bounds is None:
-            self.coord_bounds = {
-                "x_min": -10.0,
-                "x_max": 10.0,
-                "y_min": -10.0,
-                "y_max": 10.0,
-                "z_min": -5.0,
-                "z_max": 5.0,
-            }
-        else:
-            self.coord_bounds = coord_bounds
+        # if self.coord_bounds is None:
+        self.coord_bounds = {
+            "x_min": -10.0,
+            "x_max": 10.0,
+            "y_min": -10.0,
+            "y_max": 10.0,
+            "z_min": -5.0,
+            "z_max": 5.0,
+        }
 
         # Feature extraction layers
         self.feature_extractor = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(self.input_dim, self.hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim,self.hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),
         )
 
         # 3D bbox regression: predicts normalized coordinates if enabled
         # Format: center (x,y,z) + dimensions (w,h,l) = 6 parameters (no rotation)
-        self.bbox_head = nn.Linear(hidden_dim, 6 * max_bbox_len)  # 6 params per bbox
+        self.bbox_head = nn.Linear(self.hidden_dim, 6 * self.max_bbox_len)  # 6 params per bbox
 
         # Classification head for each bbox
-        if num_classes > 1:
-            self.cls_head = nn.Linear(hidden_dim, num_classes * max_bbox_len)
+        if self.num_classes > 1:
+            self.cls_head = nn.Linear(self.hidden_dim, self.num_classes * self.max_bbox_len)
         else:
             self.cls_head = None
 
         # Confidence/objectness head for each bbox
-        self.conf_head = nn.Linear(hidden_dim, max_bbox_len)
+        self.conf_head = nn.Linear(self.hidden_dim, self.max_bbox_len)
 
         # self._initialize_weights()
 

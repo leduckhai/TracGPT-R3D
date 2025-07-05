@@ -16,26 +16,23 @@ from scipy.optimize import linear_sum_assignment
 class BBox3DPredictor(nn.Module):
     """Handles 3D bounding box prediction"""
 
-    def __init__(self):
+    def __init__(self,config):
         super().__init__()
-        config={
-            "bbox3d_module": True,
-            "mm_hidden_size": 512,  # Example size, adjust as needed
-            "bbox3d_head_type": "default",  # Placeholder for bbox3d head type
-            "bbox3d_projector_type": "default",  # Placeholder for bbox3d
-        }
-        config= SimpleNamespace(**config)
+        # config={
+        #     "bbox3d_module": True,
+        #     "mm_hidden_size": 512,  # Example size, adjust as needed
+        #     "bbox3d_head_type": "default",  # Placeholder for bbox3d head type
+        #     "bbox3d_projector_type": "default",  # Placeholder for bbox3d
+        # }
+        # config= SimpleNamespace(**config)
         self.config = config
         self.bbox3d_head = None
         self.bbox3d_projector = None
         self.enabled = False
         self.loss_calculator = None
 
-        if config.bbox3d_module:
-            try:
-                self._build_components()
-            except Exception as e:
-                print(f"Warning: Failed to build bbox3d components: {e}")
+
+        self._build_components()
 
     def _build_components(self):
         """Build bbox3d components"""
@@ -52,9 +49,9 @@ class BBox3DPredictor(nn.Module):
     def _build_bbox3d_head(self):
         """Build bbox3d head - implement based on your builder"""
         try:
-            from model.bbox3d.bbox_head import build_bbox3d_module
+            from model.bbox3d.bbox_head import BBox3DHead
 
-            return build_bbox3d_module()
+            return BBox3DHead(self.config.bbox_head)
         except ImportError as e:
             raise ImportError(f"Failed to import bbox3d builder: {e}")
 
@@ -247,11 +244,18 @@ def match_boxes(pred_boxes, gt_boxes):
 
 
 if __name__=="__main__":
+    import yaml
+    from utils.type import dict_to_namespace
+    config_path="config/llama.yaml"
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    config=dict_to_namespace(config)
+
     #  assume bbox in format [center_x, center_y, center_z, width, height, length]
-    builder = BBox3DPredictor()
+    builder = BBox3DPredictor(config.tiny_llama.bbox_predictor)
     target=torch.randn(2,3,6)
-    vision_features=torch.randn(2, 256, 3072)
-    text_features=torch.randn(2, 765, 3072)
+    vision_features=torch.randn(2, 256, 2048)
+    text_features=torch.randn(2, 765, 2048)
     predictions=builder.predict_bboxes(vision_features,text_features)
     masks = torch.ones(2, 3, dtype=torch.bool)
     bbox_loss = builder.compute_bbox_loss(

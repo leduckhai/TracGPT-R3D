@@ -87,18 +87,18 @@ class MultimodalProcessor(nn.Module):
             new_label, new_embed = self._process_single_sample(
                 cur_input_ids, cur_labels, cur_image_features, embed_tokens_fn
             )
-
-            new_labels.append(new_label)
+            if new_label is not None:
+                new_labels.append(new_label)
             new_inputs_embeds.append(new_embed)
 
         return (
             torch.stack(new_inputs_embeds),
-            torch.stack(new_labels),
+            torch.stack(new_labels) if len(new_labels) > 0 else None,
             image_features,
         )
 
     def _process_single_sample(
-        self, input_ids, labels, image_features, embed_tokens_fn
+        self, input_ids, labels, image_features, embed_tokens_fn=None
     ):
       
         # We expect the image_token line consecuively
@@ -106,7 +106,8 @@ class MultimodalProcessor(nn.Module):
         if  len(image_token_idx) !=image_features.shape[1]:
             raise ValueError(f"number of image tokens not match  in input_ids expect {image_features.shape[1]} but got {len(image_token_idx)}")
 
-
+        print("process single sample")
+        print("input ids", input_ids.shape,input_ids.dtype,input_ids.min(),input_ids.max())
         text_embed= embed_tokens_fn(input_ids)
         print("image embed shape:", image_features.shape)
         print("text embed shape:", text_embed.shape)

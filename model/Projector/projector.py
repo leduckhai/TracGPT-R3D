@@ -1,11 +1,18 @@
 from torch import nn
-# from .spatial_pooling_projector import SpatialPoolingProjector
 from torch import nn
 import torch.nn.functional as F
+import os 
+from dotenv  import load_dotenv
+load_dotenv()
+import sys
+ROOT=os.getenv("ROOT")
+sys.path.append(ROOT)
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from types import SimpleNamespace
+
+import yaml
+from utils.type import dict_to_namespace
 
 class IdentityMap(nn.Module):
     def __init__(self):
@@ -83,20 +90,9 @@ class FullLinear(nn.Module):
         return num
 
 
-def build_mm_projector(mm_projector_type='spp'):
-    config={
-        "mm_projector_type": mm_projector_type,
-        "image_size": [32, 256, 256],
-        "patch_size": [4, 16, 16],
-        "in_dim": 2560,
-        "out_dim":3072,
-        "layer_type": 'mlp',
-        "layer_num": 2,
-        "pooling_type": 'spatial',
-        "pooling_size": 2,
-     
-    }
-    config=SimpleNamespace(**config)
+def build_mm_projector(config):
+    
+   
     if config.mm_projector_type == 'linear':
         return FullLinear(config)
     elif config.mm_projector_type    == 'spp':
@@ -175,7 +171,7 @@ if __name__ == "__main__":
     import torch
     # config = SimpleNamespace(mm_hidden_size=2560, hidden_size=758)
 
-    projector = build_mm_projector('spp')
+    projector = build_mm_projector()
     x = torch.randn(2, 2048, 2560)  # Example input
     output = projector(x)
     print("Output shape:", output.shape)  # Should be [2, 2048, 758] if spp is used

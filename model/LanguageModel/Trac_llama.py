@@ -1,23 +1,21 @@
 from typing import List, Optional, Tuple, Union, Any
-
 import torch
 import torch.nn as nn
 from dotenv import load_dotenv
 import os
+import yaml
 
-# Load from .env file
 load_dotenv()
 ROOT = os.getenv("ROOT") or "/workspace/repo/TracGPT-R3D"
 import sys
 
 sys.path.append(ROOT)
+
+from utils.type import dict_to_namespace
 import torch.nn.functional as F
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
-    Phi3Model,
-    Phi3ForCausalLM,
-    PretrainedConfig,
 )
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.generation.utils import GenerateOutput
@@ -29,16 +27,20 @@ import torch.nn as nn
 
 from typing import List, Optional, Tuple, Union, Any, Dict
 from model.multimodel_processor import MultimodalProcessor
-from model.Trac_phi_config import TracPhi3Config
 from model.bbox3d.builder import BBox3DPredictor
+from model.Encoder.encoder import build_vision_tower
+from model.Projector.projector import build_mm_projector
 
 
 class VisionEncoder(nn.Module):
     """Handles vision encoding and projection"""
 
-    def __init__(self, vision_tower_config="vit3d"):
+    def __init__(self, config):
         super().__init__()
-        self.vision_tower_config = vision_tower_config
+        # vision_tower_config="vit3d", model_tag=None
+        # self.model_tag=model_tag
+        self.vision_tower_config = config.vision_tower_config
+        self.mm_projector_config = config.projector
         self.vision_tower = None
         self.mm_projector = None
         self._is_built = False
@@ -49,35 +51,14 @@ class VisionEncoder(nn.Module):
         if self._is_built:
             return
         if self.vision_tower_config:
-            try:
-                self.vision_tower = self._build_vision_tower()
-                print("Vision tower built successfully.")
-                self.mm_projector = self._build_mm_projector()
-                print("MM projector built successfully.")
-                self._is_built = True
-            except Exception as e:
-                print(f"Warning: Failed to build multimodal components: {e}")
-
-    def _build_vision_tower(self):
-        """Build vision tower - implement based on your builder"""
-        try:
-            from model.Encoder.encoder import build_vision_tower
-
-            return build_vision_tower(
-                vision_tower=self.vision_tower_config,
+            self.vision_tower = build_vision_tower(
+                self.vision_tower_config,
             )
-        except ImportError as e:
-            raise ImportError(f"Failed to import vision tower builder: {e}")
-
-    def _build_mm_projector(self):
-        """Build multimodal projector - implement based on your builder"""
-        try:
-            from model.Projector.projector import build_mm_projector
-
-            return build_mm_projector()
-        except ImportError as e:
-            raise ImportError(f"Failed to import mm projector builder: {e}")
-
+            print("Vision tower built successfully.")
+            self.mm_projector = build_mm_projector(self.mm_projector_config)
+            print("MM projector built successfully.")
+            self._is_built = True
+            
     def encode_images(self, images: torch.Tensor) -> Optional[torch.Tensor]:
         """Encode images to features"""
         if not self._is_built or images is None:
@@ -123,20 +104,41 @@ class VisionEncoder(nn.Module):
                 )
 
 
-class TracPhi3Model(Phi3Model):
+class TracLlama3Model(nn.Module):
     """Trac Phi3 base model with multimodal capabilities"""
 
-    config_class = TracPhi3Config
+    # config_class = TracPhi3Config
 
-    def __init__(self, config: TracPhi3Config):
-        super().__init__(config)
-        self.config = config
-        self.multimodal_config = config.multimodal
-        self.vision_encoder = VisionEncoder()
-        self.bbox3d_predictor = BBox3DPredictor()
+    def __init__(
+        self, config, model_tag="tiny-llama", module_config_path="config/llama.yaml"
+    ):
+        super().__init__()
+        with open(module_config_path, "r") as f:
+            module_config = yaml.safe_load(f)
+        module_config = dict_to_namespace(module_config)
+        if model_tag == "tiny-llama":
+            self.model_tag = "tiny-llama"
+            model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, device_map="auto", torch_dtype=torch.float32
+            )
+            self.model.resize_token_embeddings(config.vocab_size)
+            self.module_configs = module_config.tiny_llama
+        else:
+            raise NotImplementedError
+
+        self.vision_encoder = VisionEncoder(self.module_configs.vision_encoder)
+        self.bbox3d_predictor = BBox3DPredictor(self.module_configs.bbox_predictor)
         self.multimodal_processor = MultimodalProcessor(
-            self.vision_encoder, self.multimodal_config.img_token_id
+            self.vision_encoder, image_token_id=config.img_token_id
         )
+        self.embed_tokens = self.model.model.embed_tokens
+
+    def forward(self, **kwargs):
+        return self.model(**kwargs)
+
+    def generate(self, **kwargs):
+        return self.model.generate(**kwargs)
 
     def initialize_multimodal_components(self):
         """Initialize all multimodal components"""
@@ -152,32 +154,35 @@ class TracPhi3Model(Phi3Model):
         #     self.vision_encoder.load_pretrained_weights(vision_path, projector_path)
 
 
-class TracPhi3ForCausalLM(Phi3ForCausalLM):
+class TracLlamaForCausalLM(nn.Module):
     """Trac Phi3 for causal language modeling with 3D bbox prediction"""
 
-    config_class = TracPhi3Config
     _model_cache = {}
 
-    def __init__(self, config: TracPhi3Config):
-        print("init Tracphi3")
-        super().__init__(config)
+    def __init__(self, config):
+        print("init Trac llama")
+        super().__init__()
         self.model = self.init_model(config)
         print("finish init base model")
         self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self.post_init()
+        self.embed_tokens = self.model.embed_tokens
 
-    @classmethod
-    def init_model(cls, config):
-        key = id(config)  # use object identity for cache key
-        if key not in cls._model_cache:
-            if not isinstance(config, PretrainedConfig):
-                raise ValueError("config must be an instance of PretrainedConfig")
-            cls._model_cache[key] = TracPhi3Model(config)
-        return cls._model_cache[key]
+    # @classmethod
+    # def init_model(cls, config):
+    #     key = id(config)  # use object identity for cache key
+    #     if key not in cls._model_cache:
+    #         if not isinstance(config, PretrainedConfig):
+    #             raise ValueError("config must be an instance of PretrainedConfig")
+    #         cls._model_cache[key] = TracLlama3Model(config)
+    #     return cls._model_cache[key]
+    def init_model(self, config):
+        return TracLlama3Model(config)
 
     def get_model(self):
         return self.model
+
+    # def embed_tokens(self):
+    #     return self.model.embed_tokens
 
     def all_to_device(self, device="cuda"):
         self.model.to(device)
@@ -199,7 +204,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         input_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         images: Optional[torch.FloatTensor] = None,
-        image_features: Optional[torch.FloatTensor] = None,
+        # image_features: Optional[torch.FloatTensor] = None,
         bbox_gts: Optional[torch.FloatTensor] = None,
         bbox_masks: Optional[torch.BoolTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -220,17 +225,14 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
                     labels=labels,
                 )
             )
-        print("label", labels.shape)
-        print("input", inputs_embeds.shape)
-        print("attention", attention_masks.shape)
 
-        outputs = super().forward(
+        outputs = self.model.forward(
             input_ids=None,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_masks,
             labels=labels,
             output_hidden_states=output_hidden_states,
-            **{k: v for k, v in kwargs.items() if k not in ["input_ids"]},
+            **{k: v for k, v in kwargs.items() if k not in ["input_ids","attention_mask","labels","inputs_embeds"]},
         )
 
         if enable_bboxes:
@@ -268,6 +270,7 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
             masks = bbox_masks[bbox_samples]
 
             vision_features = image_features[bbox_samples]
+            print("vision features", vision_features.shape)
             text_features = outputs.hidden_states[-1][bbox_samples]
             bbox_predictions = predictor(vision_features, text_features)
 
@@ -286,35 +289,30 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
         input_ids: Optional[torch.Tensor] = None,
         attention_masks: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
-        bbox3d_enable: bool = True,
+        bbox3d_enable: bool = False,
         **kwargs,
     ):
         """Generate with optional 3D bbox prediction"""
         # Prepare inputs
         if images is not None:
-            (inputs_embeds, labels, image_features) = (
+            (inputs_embeds, _, image_features) = (
                 self.prepare_inputs_for_multimodal(input_ids, images, **kwargs)
             )
             kwargs["inputs_embeds"] = inputs_embeds
             kwargs["attention_mask"] = attention_masks
-            kwargs["labels"] = labels
             kwargs["image_features"] = image_features
+        forward_output=self.forward(**kwargs)
+        kwargs.pop("image_features", None)  
+        
 
-        outputs = super().generate(
+
+        outputs = self.model.generate(
             output_hidden_states=False, return_dict_in_generate=True, **kwargs
         )
+        outputs["bbox_3d_pred"] =forward_output["bbox_3d_pred"]
+        
         return outputs
 
-    def _generate_with_bbox(self, images, **kwargs):
-        """Generate with 3D bbox prediction enabled"""
-        outputs = super().generate(
-            output_hidden_states=True, return_dict_in_generate=True, **kwargs
-        )
-
-        # Extract bbox features and predict
-        bbox_logits = self._process_bbox_generation(outputs, images)
-
-        return outputs.sequences, bbox_logits
 
     def _process_bbox_generation(self, outputs, images):
         """Process 3D bbox prediction during generation"""
@@ -343,8 +341,8 @@ class TracPhi3ForCausalLM(Phi3ForCausalLM):
 
 from transformers import AutoConfig, AutoModelForCausalLM
 
-AutoConfig.register("trac-phi3", TracPhi3Config)
-AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
+# AutoConfig.register("trac-phi3", TracPhi3Config)
+# AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 if __name__ == "__main__":
     from collator import QA3DDataset, BboxAwareCollator
     from torch.utils.data import DataLoader
@@ -353,7 +351,7 @@ if __name__ == "__main__":
     from transformers import AutoConfig, AutoModelForCausalLM
 
     model_max_length = 512
-    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
 
     special_tokens = [
         "<im_patch>",
@@ -363,12 +361,9 @@ if __name__ == "__main__":
         "<image_newline>",
     ]
 
-    # tokenizer.add_special_tokens({'additional_special_tokens': special_tokens})
-
     image_token_name = "<im_patch>"
-
-    for tk in special_tokens:
-        tokenizer.add_tokens(tk)
+    num_added = tokenizer.add_tokens(special_tokens)
+    print(f"Added {num_added} special tokens", len(tokenizer))
 
     collator = BboxAwareCollator(
         tokenizer=tokenizer,
@@ -381,14 +376,16 @@ if __name__ == "__main__":
     ds = QA3DDataset()
     dl = DataLoader(ds, batch_size=2, shuffle=True, collate_fn=collator)
     img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
-    config = TracPhi3Config(
-        img_token_id=tokenizer.convert_tokens_to_ids(image_token_name),
-        bbox3d_token_id=tokenizer.convert_tokens_to_ids("<bx_start>"),
-    )
-    model = TracPhi3ForCausalLM(config)
+
+    config = AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    config.img_token_id = img_token_id
+    print("before", config.vocab_size)
+    config.vocab_size = len(tokenizer)
+    model = TracLlamaForCausalLM(config)
+
     model.get_model().initialize_multimodal_components()
-    # model.all_to_device("cuda")
-    model.to("cuda")
+    # model = model.to("cuda")
+    model.all_to_device("cuda")
     for i, batch in enumerate(dl):
         (
             images,
@@ -422,19 +419,4 @@ if __name__ == "__main__":
             )
         elif i == 1:
             print("generation")
-            outputs = model.generate(
-                input_ids=input_ids,labels=labels, attention_masks=attention_mask, images=images
-            )
-
-        # outputs = model(
-        #     input_ids=input_ids,
-        #     images=images,
-        #     bbox_gts=bbox_gt,
-        #     bbox_masks=bbox_mask,
-        #     labels=labels,
-        #     attention_masks=attention_mask,
-        #     answer_types=answer_types,
-        #     position_ids=position_ids,
-        # )
-        # # print("outputs:", outputs)
-        # break
+            outputs = model.generate(input_ids=input_ids, images=images)

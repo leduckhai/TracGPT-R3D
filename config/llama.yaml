@@ -1,0 +1,38 @@
+tiny_llama:
+  vision_encoder:
+    vision_tower_config: 
+      vision_tower: vit3d
+      img_size: [32, 256, 256]
+      patch_size: [4, 16, 16]
+      in_channels: 1
+      hidden_size: 2560
+      num_heads: 8
+      vision_select_layer: -1
+      vision_select_feature: cls_patch
+
+    projector:
+      image_size: [32, 256, 256]
+      patch_size: [4, 16, 16]
+      in_dim: 2560
+      out_dim: 2048
+      layer_type: mlp
+      layer_num: 2
+      pooling_type: spatial
+      pooling_size: 2
+      mm_projector_type: spp
+  
+  bbox_predictor:
+    bbox_head:
+      input_dim: 4096
+      hidden_dim: 512
+      num_classes: 1
+      max_bbox_len: 9
+      normalize_coords: True
+      coord_bounds: None
+    
+    mm_hidden_size: 512
+    bbox3d_head_type: default
+    bbox3d_projector_type: default
+      
+
+
