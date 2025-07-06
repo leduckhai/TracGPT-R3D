@@ -16,17 +16,21 @@ import yaml
 from utils.type import dict_to_namespace
 # from model.bbox3d.bbox_head import BBox3DHead
 from model.bbox3d.builder import BBox3DPredictor
+from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
+from datetime import datetime
+
+now = datetime.now()
+date_time_str = now.strftime("%Y-%m-%d++%H:%M:%S")
 
 config_path="config/llama.yaml"
 with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 config=dict_to_namespace(config)
 
-# bbox_head=BBox3DHead(config.bbox_head)
 predictor=BBox3DPredictor(config.tiny_llama.bbox_predictor)
 
 def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True):
-    id=uuid4().hex
+    id=date_time_str 
     bert_metrics_detail=[]
     metrics_all={}
     save_bbox_data=[]
@@ -63,17 +67,23 @@ def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True):
         with torch.no_grad():
             outputs,bbox_preds = model.generate(input_ids=input_ids, images=images)
         generated_text = tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
-        print("bbox_preds",bbox_preds)
-        bbox_preds=[pred.cpu().numpy() for pred in bbox_preds]
-        bbox_gt=bbox_gt.cpu().numpy()
-        bbox_mask=bbox_mask.cpu().numpy()
+        print("bbox_preds",bbox_preds["bbox_pred"])
+        bbox_preds=bbox_preds["bbox_pred"]
         for i, text in enumerate(generated_text):
             if answer_types[i] in ["bbox_2d", "bbox_3d"]:
                 bbox_output=predictor.compute_ious(bbox_preds[i], bbox_gt[i], bbox_mask[i])
+                if bbox_output is None:
+                    continue
+                bbox_output["pred"]=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
+                bbox_output["gt"]=[gt.detach().cpu().numpy() for gt in bbox_output["gt"]]
+                bbox_output["iou"]=[iou.detach().cpu().numpy() for iou in bbox_output["iou"]]
                 for iou in bbox_output["iou"]:
                     iou_scores.append(iou)
                 save_bbox_data.append(bbox_output)
-            P, R, F1 = score(answers[i], text, lang="en", model_type="bert-base-uncased")
+                print("bbox output sample",bbox_output)
+                save_bbox_data.append(bbox_output)
+            # print("type text",answers[i], "text is",text, type(text))
+            P, R, F1 = score([answers[i]],  [text], lang="en", model_type="bert-base-uncased")
 
             print(f"Precision: {P.mean().item():.4f}")
             print(f"Recall:    {R.mean().item():.4f}")

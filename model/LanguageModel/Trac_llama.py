@@ -37,8 +37,6 @@ class VisionEncoder(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        # vision_tower_config="vit3d", model_tag=None
-        # self.model_tag=model_tag
         self.vision_tower_config = config.vision_tower_config
         self.mm_projector_config = config.projector
         self.vision_tower = None
@@ -265,7 +263,6 @@ class TracLlamaForCausalLM(nn.Module):
 
             bbox_loss = compute_bbox_loss(bbox_preds=bbox_predictions["filtered_bbox_pred"],conf_preds=bbox_predictions["filtered_conf_pred"],targets = targets,masks = masks)
 
-            # Add to outputs
             outputs.loss = outputs.loss + bbox_loss
             outputs["bbox_3d_loss"] = bbox_loss
             outputs["bbox_3d_pred"] = bbox_predictions

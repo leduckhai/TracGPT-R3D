@@ -26,12 +26,10 @@ from collections import defaultdict
 class TracDataset(Dataset):
     def __init__(
         self,
-        tokenizer,
         mode="train",
         root_dir="/root/VLMTrac",
         args=None,
     ):
-        self.tokenizer = tokenizer
         self.mode = mode
         self.base_transform = Compose(
             [
@@ -86,7 +84,7 @@ class TracDataset(Dataset):
                     data_point={
                         'slice order':sample['slice order'],
                         'Patient ID':sample['Patient ID'],
-                        "question":sample[q][0],
+                        "question":sample[q],
                         "answer":sample[a],
                     }
                     if q=="Q1":
@@ -104,13 +102,15 @@ class TracDataset(Dataset):
     def __getitem__(self, idx):
         data_point = self.qa_banks[idx]
         slice_order = data_point["slice order"]
+        data_point["slice_order"]=data_point["slice order"]
+        del data_point["slice order"]
+        data_point["patient_id"] = data_point["Patient ID"]
         patient_id = data_point["Patient ID"]
 
         image_path = [
             os.path.join(self.img_dir, patient_id, f"{s}.pkl")
             for s in slice_order
         ]
-        print("image_path",image_path[0])
         for path in image_path:
             assert os.path.exists(path) , f"{path} does not exist"
         image_3d = convert_list_slice_paths_to_3d(image_path)
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     import os
     import random
     from sklearn.model_selection import train_test_split
-    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    # tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
     # train_val_dir = "/home/ubuntu/repo/TracGPT-R3D/VLMTrac/50_chunk_data/train"
     # patient_records = os.listdir(os.path.join(train_val_dir, "data"))
     # patient_records = sorted(patient_records)
@@ -133,19 +133,22 @@ if __name__ == "__main__":
     # )
 
 
-    # train_set = TracDataset( tokenizer=tokenizer,mode="train")
-    # for i in range(len(train_set)):
-    #     print(train_set[i])
-
-    sample_dirs="/root/VLMTrac/2d_data/train/image/OAS1_0001"
-    files=[os.path.join(sample_dirs,f) for f in os.listdir(sample_dirs)]
+    train_set = TracDataset( mode="train")
+    for i,sample in enumerate( train_set):
+        print("keys", sample.keys())
+        slice_order = sample["slice_order"]
+        patient_id = sample["patient_id"]
+        question = sample["question"]
+        answer = sample["answer"]
+        answer_type = sample["answer_type"]
+        bbox_3d = sample["bbox_3d"]
+        image = sample["image"]
+        print("image shape", image.shape,image.min(),image.max())
+        print("answer type", answer_type)
+        print ("question", question
+        )
+        print("answer", answer)
+        print("bbox", bbox_3d)
+        if i==3:
+            break
     
-    def is_pickle_header(path):
-        with open(path, 'rb') as f:
-            first_bytes = f.read(2)
-            print("first_bytes",first_bytes)
-            return first_bytes == b'\x80\x04'  # pickle protocol 4
-
-    print("valid",is_pickle_header(files[0]))
-    sample = convert_list_slice_paths_to_3d(files)
-    print(sample.shape)

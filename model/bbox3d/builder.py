@@ -111,16 +111,10 @@ class BBox3DPredictor(nn.Module):
             return None
 
         try:
-            # Pool features
             vision_pooled = vision_features.mean(dim=1)  # [B, D_v]
             text_pooled = text_features.mean(dim=1)  # [B, D_t]
 
-            # print("vision_pooled",vision_pooled.shape)
-            # print("text_pooled",text_pooled.shape)
-            # Combine features
             combined = torch.cat([vision_pooled, text_pooled], dim=-1)
-            # print("combined",combined.shape)
-            # Predict bboxes
             return self.bbox3d_head(combined)
         except Exception as e:
             raise Exception(f"Warning: Failed to predict bboxes: {e}")
@@ -157,6 +151,38 @@ class BBox3DPredictor(nn.Module):
                 losses.append(loss)
 
         return torch.stack(losses).sum()
+
+    def compute_ious(
+        self,
+        bbox_preds,
+        targets,
+        masks,
+    ):
+        """
+        Compute IoU matrix between predicted and ground truth 3D boxes
+        Args:
+            pred_boxes: [N, 6] in format [x_min, y_min, z_min, x_max, y_max, z_max]
+            gt_boxes:   [M, 6] in same format
+        Returns:
+            iou_matrix: [N, M] IoU values
+        """
+
+        pairs = defaultdict(list)
+        gt_boxes_minmax = targets[masks]
+        if len(gt_boxes_minmax) == 0:
+            return
+        bbox_pred_minmax = self.bbox3d_head.convert_model_to_gt_format(bbox_preds)
+        matches = hungarian_iou_matching(bbox_pred_minmax, gt_boxes_minmax)
+        for pred_idx, gt_idx, iou in matches:
+            pred_box = bbox_preds[pred_idx]
+            gt_box = gt_boxes_minmax[gt_idx]
+            abs_iou = box3d_iou_single(
+                pred_box, gt_box, denormalize=self.bbox3d_head.denormalize_boxes
+            )
+        pairs["pred"].append(pred_box)
+        pairs["gt"].append(gt_box)
+        pairs["iou"].append(abs_iou)
+        return pairs
 
 
 def hungarian_iou_matching(pred_boxes, gt_boxes):
@@ -209,39 +235,6 @@ def compute_3d_iou_matrix(pred_boxes, gt_boxes):
             iou_matrix[i, j] = box3d_iou_single(pred_boxes[i], gt_boxes[j])
 
     return iou_matrix
-
-
-def compute_ious(
-    self,
-    bbox_preds,
-    targets,
-    masks,
-):
-    """
-    Compute IoU matrix between predicted and ground truth 3D boxes
-    Args:
-        pred_boxes: [N, 6] in format [x_min, y_min, z_min, x_max, y_max, z_max]
-        gt_boxes:   [M, 6] in same format
-    Returns:
-        iou_matrix: [N, M] IoU values
-    """
-
-    pairs = defaultdict(list)
-    gt_boxes_minmax = target[masks]
-    if len(gt_boxes_minmax) == 0:
-        return
-    bbox_pred_minmax = self.bbox3d_head.convert_model_to_gt_format(bbox_preds)
-    matches = hungarian_iou_matching(bbox_pred_minmax, gt_boxes_minmax)
-    for pred_idx, gt_idx, iou in matches:
-        pred_box = bbox_preds[pred_idx]
-        gt_box = gt_boxes_minmax[gt_idx]
-        abs_iou = box3d_iou_single(
-            pred_box, gt_box, denormalize=self.bbox3d_head.denormalize_coords
-        )
-    pairs["pred"].append(pred_box)
-    pairs["gt"].append(gt_box)
-    pairs["iou"].append(abs_iou)
-    return pairs
 
 
 if __name__ == "__main__":

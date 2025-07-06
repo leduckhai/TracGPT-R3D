@@ -1,0 +1,5 @@
+[defaultdict(<class 'list'>, {'pred': [array([-0.05510795, -0.0284955 , -0.17562242,  0.00310937, -0.05550807,
+        0.00890767], dtype=float32)], 'gt': [array([0.4 , 0.02, 0.1 , 0.1 , 0.1 , 0.3 ], dtype=float32)], 'iou': [array(-0., dtype=float32)]}), defaultdict(<class 'list'>, {'pred': [array([-0.05510795, -0.0284955 , -0.17562242,  0.00310937, -0.05550807,
+        0.00890767], dtype=float32)], 'gt': [array([0.4 , 0.02, 0.1 , 0.1 , 0.1 , 0.3 ], dtype=float32)], 'iou': [array(-0., dtype=float32)]}), defaultdict(<class 'list'>, {'pred': [array([-0.08464095, -0.06511718, -0.08985682,  0.03687452, -0.03594449,
+       -0.18482701], dtype=float32)], 'gt': [array([0.4 , 0.02, 0.1 , 0.1 , 0.1 , 0.3 ], dtype=float32)], 'iou': [array(-0., dtype=float32)]}), defaultdict(<class 'list'>, {'pred': [array([-0.08464095, -0.06511718, -0.08985682,  0.03687452, -0.03594449,
+       -0.18482701], dtype=float32)], 'gt': [array([0.4 , 0.02, 0.1 , 0.1 , 0.1 , 0.3 ], dtype=float32)], 'iou': [array(-0., dtype=float32)]})]
