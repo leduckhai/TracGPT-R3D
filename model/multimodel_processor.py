@@ -71,9 +71,7 @@ class MultimodalProcessor(nn.Module):
         embed_tokens_fn: callable,
     ) -> Tuple:
         """Handle multimodal inputs with vision and text fusion"""
-        print("before image encoder", images.shape)
         image_features = self.vision_encoder.encode_images(images)
-        print("image features shape:", image_features.shape)
         new_labels = []
         new_inputs_embeds = []
 
@@ -106,11 +104,7 @@ class MultimodalProcessor(nn.Module):
         if  len(image_token_idx) !=image_features.shape[1]:
             raise ValueError(f"number of image tokens not match  in input_ids expect {image_features.shape[1]} but got {len(image_token_idx)}")
 
-        print("process single sample")
-        print("input ids", input_ids.shape,input_ids.dtype,input_ids.min(),input_ids.max())
         text_embed= embed_tokens_fn(input_ids)
-        print("image embed shape:", image_features.shape)
-        print("text embed shape:", text_embed.shape)
         start_idx = image_token_idx[0]
         end_idx = image_token_idx[-1] + 1
         new_embeds = torch.cat(

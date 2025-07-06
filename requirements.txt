@@ -16,3 +16,4 @@ accelerate
 protobuf
 hf_transfer
 tensorboardX
+bert_score

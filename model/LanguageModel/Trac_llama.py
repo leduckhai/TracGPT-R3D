@@ -66,9 +66,7 @@ class VisionEncoder(nn.Module):
 
         try:
             image_features = self.vision_tower(images)
-            print("image_features 1", image_features.shape)
             image_features = self.mm_projector(image_features)
-            print("image_features 2", image_features.shape)
             return image_features
         except Exception as e:
             print(f"Warning: Failed to encode images: {e}")
@@ -181,9 +179,6 @@ class TracLlamaForCausalLM(nn.Module):
     def get_model(self):
         return self.model
 
-    # def embed_tokens(self):
-    #     return self.model.embed_tokens
-
     def all_to_device(self, device="cuda"):
         self.model.to(device)
         if self.model.vision_encoder.vision_tower:
@@ -204,7 +199,7 @@ class TracLlamaForCausalLM(nn.Module):
         input_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         images: Optional[torch.FloatTensor] = None,
-        # image_features: Optional[torch.FloatTensor] = None,
+        image_features: Optional[torch.FloatTensor] = None,
         bbox_gts: Optional[torch.FloatTensor] = None,
         bbox_masks: Optional[torch.BoolTensor] = None,
         labels: Optional[torch.LongTensor] = None,
@@ -235,7 +230,7 @@ class TracLlamaForCausalLM(nn.Module):
             **{k: v for k, v in kwargs.items() if k not in ["input_ids","attention_mask","labels","inputs_embeds"]},
         )
 
-        if enable_bboxes:
+        if enable_bboxes and image_features is not None :
             outputs = self._handle_bbox_prediction(
                 outputs, image_features, bbox_gts, bbox_masks
             )
@@ -246,35 +241,29 @@ class TracLlamaForCausalLM(nn.Module):
         self, outputs, image_features, bbox_gts=None, bbox_masks=None
     ):
         """Handle 3D bounding box prediction"""
-        print("handle bbox prediction")
 
-        # Dependency injection
         predictor = self.model.bbox3d_predictor.predict_bboxes
         compute_bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss
 
         if bbox_masks == None and bbox_gts == None:
-            print("no grouth truth or mask, predice bbox mode")
             vision_features = image_features
             text_features = outputs.hidden_states[-1]
             bbox_predictions = predictor(vision_features, text_features)
             outputs["bbox_3d_pred"] = bbox_predictions
         else:
-            print("normal mode")
 
             bbox_samples = bbox_masks.any(dim=1)
             if not bbox_samples.any():
-                print("No valid bbox samples found.")
                 return outputs
 
             targets = bbox_gts[bbox_samples]
             masks = bbox_masks[bbox_samples]
 
             vision_features = image_features[bbox_samples]
-            print("vision features", vision_features.shape)
             text_features = outputs.hidden_states[-1][bbox_samples]
             bbox_predictions = predictor(vision_features, text_features)
 
-            bbox_loss = compute_bbox_loss(bbox_predictions, targets, masks)
+            bbox_loss = compute_bbox_loss(bbox_preds=bbox_predictions["filtered_bbox_pred"],conf_preds=bbox_predictions["filtered_conf_pred"],targets = targets,masks = masks)
 
             # Add to outputs
             outputs.loss = outputs.loss + bbox_loss
@@ -293,7 +282,6 @@ class TracLlamaForCausalLM(nn.Module):
         **kwargs,
     ):
         """Generate with optional 3D bbox prediction"""
-        # Prepare inputs
         if images is not None:
             (inputs_embeds, _, image_features) = (
                 self.prepare_inputs_for_multimodal(input_ids, images, **kwargs)
@@ -301,22 +289,23 @@ class TracLlamaForCausalLM(nn.Module):
             kwargs["inputs_embeds"] = inputs_embeds
             kwargs["attention_mask"] = attention_masks
             kwargs["image_features"] = image_features
-        forward_output=self.forward(**kwargs)
+        
+        forward_output = self.forward(**kwargs)
         kwargs.pop("image_features", None)  
         
-
-
+          
         outputs = self.model.generate(
+            # inputs_embeds=inputs_embeds,
+            # attention_mask=attention_masks,
             output_hidden_states=False, return_dict_in_generate=True, **kwargs
         )
-        outputs["bbox_3d_pred"] =forward_output["bbox_3d_pred"]
+        # outputs["bbox_3d_pred"] =forward_output["bbox_3d_pred"]
         
-        return outputs
+        return outputs, forward_output["bbox_3d_pred"]
 
 
     def _process_bbox_generation(self, outputs, images):
         """Process 3D bbox prediction during generation"""
-        # Extract hidden states from generation
         last_tensors = [step[-1] for step in outputs.hidden_states]
         last_hidden_state = torch.cat(last_tensors[1:], dim=1)
 
@@ -346,7 +335,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 if __name__ == "__main__":
     from collator import QA3DDataset, BboxAwareCollator
     from torch.utils.data import DataLoader
-
+    from eval import evaluate
     from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
     from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -359,9 +348,11 @@ if __name__ == "__main__":
         "<bx_end>",
         "<image>",
         "<image_newline>",
+        "<end>",
     ]
 
     image_token_name = "<im_patch>"
+    end_token = "<end>"
     num_added = tokenizer.add_tokens(special_tokens)
     print(f"Added {num_added} special tokens", len(tokenizer))
 
@@ -386,37 +377,52 @@ if __name__ == "__main__":
     model.get_model().initialize_multimodal_components()
     # model = model.to("cuda")
     model.all_to_device("cuda")
-    for i, batch in enumerate(dl):
-        (
-            images,
-            input_ids,
-            attention_mask,
-            labels,
-            bbox_gt,
-            bbox_mask,
-            position_ids,
-        ) = batch.values()
-        images = images.to("cuda")
-        input_ids = input_ids.to("cuda")
-        attention_mask = attention_mask.to("cuda")
-        labels = labels.to("cuda")
-        bbox_gt = bbox_gt.to("cuda")
-        bbox_mask = bbox_mask.to("cuda")
-        position_ids = position_ids.to("cuda")
+    evaluate(model, dl,tokenizer,save_path="eval_result")
+    # for i, batch in enumerate(dl):
+    #     (
+    #         images,
+    #         input_ids,
+    #         attention_mask,
+    #         labels,
+    #         bbox_gt,
+    #         bbox_mask,
+    #         position_ids,
+    #         answer_types,
+    #         questions,
+    #         answers
+    #     ) = batch.values()
+    #     images = images.to("cuda")
+    #     input_ids = input_ids.to("cuda")
+    #     attention_mask = attention_mask.to("cuda")
+    #     labels = labels.to("cuda")
+    #     bbox_gt = bbox_gt.to("cuda")
+    #     bbox_mask = bbox_mask.to("cuda")
+    #     position_ids = position_ids.to("cuda")
 
-        if i == 0:
-            print("forward pass")
-            print("mask", bbox_mask)
-            print("gt", bbox_gt)
-            outputs = model(
-                input_ids=input_ids,
-                images=images,
-                bbox_gts=bbox_gt,
-                bbox_masks=bbox_mask,
-                labels=labels,
-                attention_masks=attention_mask,
-                position_ids=position_ids,
-            )
-        elif i == 1:
-            print("generation")
-            outputs = model.generate(input_ids=input_ids, images=images)
+    #     if i == 0:
+    #         print("forward pass")
+    #         print("mask", bbox_mask)
+    #         print("gt", bbox_gt)
+    #         outputs = model(
+    #             input_ids=input_ids,
+    #             images=images,
+    #             # bbox_gts=bbox_gt,
+    #             # bbox_masks=bbox_mask,
+    #             labels=labels,
+    #             attention_masks=attention_mask,
+    #             position_ids=position_ids,
+    #         )
+    #         print("outputs bobx", outputs["bbox_3d_pred"])
+    #     elif i == 1:
+    #         print("generation")
+    #         outputs,bbox_pred = model.generate(input_ids=input_ids, images=images)
+    #         print("type output",type(outputs))
+    #         # print("Generated token IDs:", outputs.sequences[0])
+    #         generated_text = tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
+         
+    #         print("bbox pred", bbox_pred)
+    #         for i, text in enumerate(generated_text):
+    #             print(f"Output {i}: {text}")
+        
+    #     else:
+    #         break

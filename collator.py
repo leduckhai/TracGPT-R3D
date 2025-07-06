@@ -86,10 +86,11 @@ class QA3DDataset(Dataset):
         return item 
 
 class BboxAwareCollator:
-    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>"):
+    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>"):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.max_bbox_length = max_bbox_length
+        self.end_token = end_token
         # self.image_tk=f"<image_context>  {token_name*num_vision_token} <image_context>"
         self.image_tk = f"<image_context> {' '.join([token_name] * num_vision_token)} <image_context>"
 
@@ -132,7 +133,8 @@ class BboxAwareCollator:
         ]
         bbox_masks=[]
         answer_types = []
-        
+        questions=[]
+        answers=[]
         for sample in batch:
             images.append(sample['image'])
             answer_types.append(sample['answer_type'])
@@ -152,8 +154,11 @@ class BboxAwareCollator:
                 bbox_gt=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
                 bbox_mask=self.create_bbox_attention_mask(0, self.max_bbox_length)
             
+            answer_types.append(sample['answer_type'])
+            questions.append(sample['question'])
+            answers.append(formatted_answer)
             question_text = f"Question: {sample['question']} Answer:"
-            full_text = f"{question_text} {self.image_tk} Answer: {formatted_answer}"
+            full_text = f"{question_text} {self.image_tk} Answer: {formatted_answer} {self.end_token}"
             bbox_gts.append(torch.tensor(bbox_gt, dtype=torch.float32))
             bbox_masks.append(torch.tensor(bbox_mask, dtype=torch.bool))
             encoded = self.tokenizer(
@@ -180,9 +185,12 @@ class BboxAwareCollator:
             'input_ids': torch.stack(input_ids),
             'attention_masks': torch.stack(attention_masks),
             'labels': torch.stack(labels),
-            'bbox_gts': torch.stack([torch.tensor(b) for b in bbox_gts]),
-            'bbox_masks': torch.stack([torch.tensor(b) for b in bbox_masks]),
-            'position_ids': position_ids   
+            'bbox_gts': torch.stack( bbox_gts),
+            'bbox_masks': torch.stack( bbox_masks),
+            'position_ids': position_ids  ,
+            'answer_types': answer_types,
+            'questions':questions,
+            'answers':answers   
         }
     
 class BboxPostProcessor:

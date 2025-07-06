@@ -10,12 +10,6 @@ class BBox3DHead(nn.Module):
     def __init__(
         self,
         config: SimpleNamespace,
-        # input_dim: int=6144,
-        # hidden_dim: int = 512,
-        # num_classes: int = 1,
-        # max_bbox_len: int = 9,
-        # normalize_coords: bool = True,
-        # coord_bounds: dict = None,
     ):
         super().__init__()
         self.input_dim =config.input_dim
@@ -23,16 +17,14 @@ class BBox3DHead(nn.Module):
         self.num_classes = config.num_classes
         self.max_bbox_len = config.max_bbox_len
         self.normalize_coords = config.normalize_coords
-        # self.coord_bounds = config.coord_bounds
-        # Default coordinate bounds for normalization
-        # if self.coord_bounds is None:
+     
         self.coord_bounds = {
-            "x_min": -10.0,
-            "x_max": 10.0,
-            "y_min": -10.0,
-            "y_max": 10.0,
-            "z_min": -5.0,
-            "z_max": 5.0,
+            "x_min": config.coord_bounds.x_min,
+            "x_max": config.coord_bounds.x_max,
+            "y_min": config.coord_bounds.y_min,
+            "y_max": config.coord_bounds.y_max,
+            "z_min": config.coord_bounds.z_min,
+            "z_max": config.coord_bounds.z_max,
         }
 
         # Feature extraction layers
@@ -49,13 +41,11 @@ class BBox3DHead(nn.Module):
         # Format: center (x,y,z) + dimensions (w,h,l) = 6 parameters (no rotation)
         self.bbox_head = nn.Linear(self.hidden_dim, 6 * self.max_bbox_len)  # 6 params per bbox
 
-        # Classification head for each bbox
         if self.num_classes > 1:
             self.cls_head = nn.Linear(self.hidden_dim, self.num_classes * self.max_bbox_len)
         else:
             self.cls_head = None
 
-        # Confidence/objectness head for each bbox
         self.conf_head = nn.Linear(self.hidden_dim, self.max_bbox_len)
 
         # self._initialize_weights()
@@ -71,7 +61,6 @@ class BBox3DHead(nn.Module):
     def forward(
         self, x, dynamic_output=True, conf_threshold=0.5, apply_constraints=True
     ):
-        # torch.Size([2, 6144])
         """
         Forward pass with dynamic output capability
         Args:
@@ -84,7 +73,6 @@ class BBox3DHead(nn.Module):
         """
         batch_size = x.shape[0]
         features = self.feature_extractor(x)
-        # torch[2,512]
 
         # Predict all possible bboxes
         bbox_pred = self.bbox_head(features)  # [batch_size, 6 * max_bbox_len]
@@ -93,7 +81,6 @@ class BBox3DHead(nn.Module):
             batch_size, self.max_bbox_len, 6
         )  # [batch_size, max_bbox_len, 6]
 
-        # Apply constraints to bbox predictions
         # if apply_constraints:
         #     bbox_pred = self._apply_bbox_constraints(bbox_pred)
 
@@ -198,6 +185,7 @@ class BBox3DHead(nn.Module):
         gt_boxes = torch.stack([x_min, y_min, z_min, x_max, y_max, z_max], dim=-1)
 
         return gt_boxes
+
 
     def normalize_boxes(self, boxes):
         """
@@ -545,7 +533,23 @@ class BBox3DHead(nn.Module):
 
         return corners
 
+def box3d_iou_single( box1, box2,denormalize=None):
+    if denormalize:
+        box1 = denormalize(box1)
+        box2 = denormalize (box2)
+        print("box1",box1,"box2",box2)
+    inter_min = torch.max(box1[:3], box2[:3])
+    inter_max = torch.min(box1[3:], box2[3:])
+    inter_dim = (inter_max - inter_min).clamp(min=0)
+    inter_vol = inter_dim.prod()
 
+    # Volumes
+    vol1 = (box1[3:] - box1[:3]).prod()
+    vol2 = (box2[3:] - box2[:3]).prod()
+
+    union_vol = vol1 + vol2 - inter_vol + 1e-8
+    iou = inter_vol / union_vol
+    return iou
 # Example usage with GT format conversion and normalization
 if __name__ == "__main__":
     print("=== BBox Format Conversion and Normalization ===")
