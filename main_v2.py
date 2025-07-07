@@ -16,6 +16,8 @@ from collator import QA3DDataset, BboxAwareCollator
 from torch.utils.data import DataLoader
 import torch.nn as nn
 from typing import Union, Tuple
+from data.dataloader import load_data
+from transformers import Trainer, TrainingArguments
 
 # Disable distributed training detection
 os.environ["RANK"] = "-1"
@@ -26,53 +28,6 @@ os.environ["WORLD_SIZE"] = "1"
 def print_info(*args):
     """Simple print function"""
     print(*args)
-
-
-def create_model_args():
-    """Create model arguments namespace"""
-    args = argparse.Namespace()
-    args.version = "v0"
-    args.model_name_or_path = "microsoft/phi-2"
-    args.model_type = "phi3"  # Changed from phi2 to phi3 to match architecture
-    args.freeze_backbone = False
-    args.pretrain_mllm = None
-    args.tune_mm_mlp_adapter = False
-    args.pretrain_mm_mlp_adapter = None
-
-    # image
-    args.image_channel = 1
-    args.image_size = (32, 256, 256)
-    args.patch_size = (4, 16, 16)
-
-    # vision
-    args.vision_tower = "vit3d"
-    args.vision_select_layer = -1
-    args.vision_select_feature = "patch"
-    args.pretrain_vision_model = None
-    args.freeze_vision_tower = False
-    args.num_new_tokens = 4
-    args.vision_hidden_size=768  
-    args.vision_num_heads = 12 
-
-    # projector
-    args.mm_projector_type = "spp"
-    args.proj_layer_type = "mlp"
-    args.proj_layer_num = 2
-    args.proj_pooling_type = "spatial"
-    args.proj_pooling_size = 2
-
-    # segvol
-    args.segmentation_module = None
-    args.pretrain_seg_module = None
-
-    # bbox3d
-    args.bbox3d_module = "simple"  # Enable bbox3d module
-    args.bbox_hidden_size = 1024
-    args.num_classes = 1
-    args.max_bbox_length = 9
-    args.mm_hidden_size = 2560
-
-    return args
 
 
 def create_data_args():
@@ -95,6 +50,27 @@ def create_data_args():
     args.refseg_data_test_path = "./Data/data/M3D_RefSeg_npy/M3D_RefSeg_test.csv"
 
     return args
+
+def set_up_lora(model, training_args):
+    print_info("Setting up LoRA...")
+    from peft import LoraConfig, get_peft_model, TaskType
+
+    # Find all linear layer names for LoRA
+    lora_module_names = find_all_linear_names(model)
+    print_info(f"LoRA target modules: {lora_module_names}")
+
+    lora_config = LoraConfig(
+        r=training_args.lora_r,
+        lora_alpha=training_args.lora_alpha,
+        target_modules=lora_module_names,
+        lora_dropout=training_args.lora_dropout,
+        bias=training_args.lora_bias,
+        task_type=TaskType.CAUSAL_LM,
+    )
+
+    model = get_peft_model(model, lora_config)
+    print_info("LoRA setup complete!")
+    print_info(f"Trainable parameters: {model.print_trainable_parameters()}")
 
 
 def create_training_args():
@@ -195,82 +171,6 @@ def create_training_args():
     args.should_save = True
 
     return args
-
-
-def create_trac_phi3_config(model_args):
-    """Create TracPhi3Config from model arguments"""
-    # Start with base Phi3 config
-    base_config = {
-        # 'hidden_size': model_args.hidden_size,
-        # 'intermediate_size': model_args.hidden_size * 4,
-        # 'num_attention_heads': 32,
-        # 'num_hidden_layers': 32,
-        # 'num_key_value_heads': 32,
-        # 'vocab_size': model_args.vocab_size,
-        # 'max_position_embeddings': 4096,
-        # 'rms_norm_eps': 1e-5,
-        # 'rope_theta': 10000.0,
-        # 'sliding_window': None,
-        # 'attention_dropout': 0.0,
-        # 'return_dict': True,
-        # 'output_hidden_states': False,
-        # 'output_attentions': False,
-        # 'torch_dtype': 'float16',
-        # 'use_cache': True,
-    }
-    
-    # Add multimodal configuration
-    multimodal_config = {
-        'vision_tower': model_args.vision_tower,
-        'mm_projector_type': model_args.mm_projector_type,
-        'bbox3d_module': model_args.bbox3d_module,
-        'mm_hidden_size': model_args.mm_hidden_size,
-        'bbox3d_token_id': getattr(model_args, 'bbox3d_token_id', None),
-        'img_token_id': model_args.img_token_id,
-        'image_channel': model_args.image_channel,
-        'image_size': model_args.image_size if isinstance(model_args.image_size, int) else model_args.image_size[1],
-        'patch_size': model_args.patch_size if isinstance(model_args.patch_size, int) else model_args.patch_size[1],
-        'vision_select_layer': model_args.vision_select_layer,
-        'vision_select_feature': model_args.vision_select_feature,
-        'proj_layer_type': model_args.proj_layer_type,
-        'proj_layer_num': model_args.proj_layer_num,
-        'proj_pooling_type': model_args.proj_pooling_type,
-        'proj_pooling_size': model_args.proj_pooling_size,
-
-        # vision config 
-        'vision_hidden_size':model_args.vision_hidden_size,
-        'vision_nums_heads': model_args.vision_num_heads,
-        
-    }
-    
-    print("multimodal_config: here", multimodal_config)
-    # Combine all configurations
-    config_dict = {**base_config, **multimodal_config}
-    return TracPhi3Config(**config_dict)
-
-
-def compute_metrics(eval_preds):
-    """Compute accuracy metrics"""
-    labels_ids = eval_preds.label_ids
-    pred_ids = eval_preds.predictions
-
-    labels = labels_ids[:, 1:]
-    preds = pred_ids[:, :-1]
-
-    labels_flatten = labels.reshape(-1)
-    preds_flatten = preds.reshape(-1)
-    valid_indices = np.where(labels_flatten != -100)
-    filtered_preds = preds_flatten[valid_indices]
-    filtered_labels = labels_flatten[valid_indices]
-    acc_score = sum(filtered_preds == filtered_labels) / len(filtered_labels)
-
-    return {"accuracy": acc_score}
-
-
-def preprocess_logits_for_metrics(logits, labels):
-    """Preprocess logits for metrics computation"""
-    pred_ids = torch.argmax(logits, dim=-1)
-    return pred_ids
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -391,6 +291,9 @@ def parse_arguments():
     parser.add_argument(
         "--tune_mm_mlp_adapter", action="store_true", help="Tune MM MLP adapter"
     )
+    parser.add_argument(
+        "--model_max_length", type=int, default=512, help="Maximum model length"
+    )
 
     # LoRA arguments
     parser.add_argument(
@@ -438,6 +341,13 @@ def parse_arguments():
         default=4,
         help="Eval batch size per device",
     )
+
+    parser.add_argument(
+        "--per_device_test_batch_size",
+        type=int,
+        default=2,
+        help="test batch size per device",
+    )
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
@@ -476,7 +386,7 @@ def parse_arguments():
         help="Gradient checkpointing",
     )
     # what is dataloader_pin_memory?
-    
+
     parser.add_argument(
         "--dataloader_pin_memory",
         type=lambda x: x.lower() == "False",
@@ -500,22 +410,17 @@ def parse_arguments():
 
 
 def main():
-    # Parse command line arguments
     cmd_args = parse_arguments()
 
     # Create argument namespaces
-    model_args = create_model_args()
     data_args = create_data_args()
     training_args = create_training_args()
-    print("model_args:", model_args)
     print("data_args:", data_args)
     print("training_args:", training_args)
 
     # Override with command line arguments
     for key, value in vars(cmd_args).items():
-        if hasattr(model_args, key):
-            setattr(model_args, key, value)
-        elif hasattr(data_args, key):
+        if hasattr(data_args, key):
             setattr(data_args, key, value)
         elif hasattr(training_args, key):
             # Handle special conversions for training args
@@ -533,10 +438,7 @@ def main():
 
     print_info("=" * 20 + " Enhanced Training Setup " + "=" * 20)
     print_info(f"Device: {training_args.device}")
-    print_info(f"Model: {model_args.model_name_or_path}")
-    print_info(f"Model Type: {model_args.model_type}")
-    print_info(f"Version: {model_args.version}")
-    print_info(f"Vision Tower: {model_args.vision_tower}")
+    print_info(f"Base Model{cmd_args.model_name_or_path} ")
     print_info(f"LoRA Enabled: {training_args.lora_enable}")
     print_info(f"BF16: {training_args.bf16}, FP16: {training_args.fp16}")
     print_info(f"Output: {training_args.output_dir}")
@@ -550,185 +452,86 @@ def main():
     print_info("=" * 20 + " Tokenizer preparation " + "=" * 20)
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        model_max_length=training_args.model_max_length,
+        cmd_args.model_name_or_path,
         padding_side="right",
         use_fast=False,
     )
 
     # Add special tokens
-    special_token = {
-        "additional_special_tokens": ["<im_patch>", "<bx_start>", "<bx_end>","<image>", "<image_newline>"]
-    }
-    tokenizer.add_special_tokens(special_token)
-    tokenizer.add_tokens("[SEG]")
-    # image_token_id = tokenizer.convert_tokens_to_ids("<image>")
-    image_newline_token_id = tokenizer.convert_tokens_to_ids("<image_newline>")
+    special_tokens = [
+        "<im_patch>",
+        # "<bx_start>",
+        # "<bx_end>",
+        # "<image>",
+        # "<image_newline>",
+        "<end>",
+    ]
+    image_token_name = "<im_patch>"
+    end_token = "<end>"
+    num_added = tokenizer.add_tokens(special_tokens)
 
+    print(f"Added {num_added} special tokens", len(tokenizer))
 
-    if tokenizer.unk_token is not None and tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.unk_token
-    if model_args.model_type and "llama3" in model_args.model_type:
-        tokenizer.eos_token_id = 128001
-        tokenizer.pad_token = tokenizer.eos_token
+    collator = BboxAwareCollator(
+        tokenizer=tokenizer,
+        max_length=cmd_args.model_max_length,
+        max_bbox_length=9,
+        num_vision_token=256,
+        token_name=image_token_name,
+    )
+    train_set, val_set, test_set = load_data()
+    print("train set", len(train_set))
+    print("val set", len(val_set))
+    print("test set", len(test_set))
 
-    # Set token IDs
-    model_args.img_token_id = tokenizer.convert_tokens_to_ids("<im_patch>")
-    model_args.seg_token_id = tokenizer.convert_tokens_to_ids("[SEG]")
-    model_args.bbox3d_token_id = tokenizer.convert_tokens_to_ids("<bx_start>")
-    model_args.vocab_size = len(tokenizer)
-    
-    print_info("img_token_id:", model_args.img_token_id)
-    print_info("seg_token_id:", model_args.seg_token_id) 
-    print_info("bbox3d_token_id:", model_args.bbox3d_token_id)
-    print_info("vocab_size:", model_args.vocab_size)
+    train_dataloader = DataLoader(
+        train_set,
+        batch_size=training_args.per_device_train_batch_size,
+        collate_fn=collator,
+        pin_memory=cmd_args.dataloader_pin_memory,
+        num_workers=cmd_args.dataloader_num_workers,
+    )
+    val_dataloader = DataLoader(
+        val_set,
+        batch_size=training_args.per_device_eval_batch_size,
+        collate_fn=collator,
+        pin_memory=cmd_args.dataloader_pin_memory,
+        num_workers=cmd_args.dataloader_num_workers,
+    )
+    test_dataloader = DataLoader(
+        test_set,
+        batch_size=training_args.per_device_test_batch_size,
+        collate_fn=collator,
+        pin_memory=cmd_args.dataloader_pin_memory,
+    )
 
-    print_info("=" * 20 + " Model preparation " + "=" * 20)
+    img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
 
-    # Create TracPhi3Config
-    config = create_trac_phi3_config(model_args)
-    
-    # Set bbox3d_token_id in config
-    config.bbox3d_token_id = model_args.bbox3d_token_id
+    config = AutoConfig.from_pretrained(cmd_args.model_name_or_path)
+    config.img_token_id = img_token_id
+    config.vocab_size = len(tokenizer)
 
-    # Load model with custom config
-    print_info("Loading TracPhi3ForCausalLM model...")
-    model = TracPhi3ForCausalLM(config)
-    
-    # Load pretrained weights from the base model
-    if model_args.model_name_or_path and model_args.model_name_or_path != "":
-        try:
-            from transformers import AutoModelForCausalLM
-            base_model = AutoModelForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                torch_dtype=(
-                    torch.bfloat16
-                    if training_args.bf16
-                    else (torch.float16 if training_args.fp16 else torch.float32)
-                ),
-            )
-            
-            model_dict = model.state_dict()
-            pretrained_dict = base_model.state_dict()
-            
-            # Filter out incompatible keys and load compatible ones
-            compatible_dict = {}
-            for k, v in pretrained_dict.items():
-                if k in model_dict and model_dict[k].shape == v.shape:
-                    compatible_dict[k] = v
-                    
-            model_dict.update(compatible_dict)
-            model.load_state_dict(model_dict, strict=False)
-            print_info(f"Loaded {len(compatible_dict)} compatible weights from pretrained model")
-            
-            del base_model
-            torch.cuda.empty_cache()
-            
-        except Exception as e:
-            print_info(f"Warning: Could not load pretrained weights: {e}")
+    if cmd_args.model_name_or_path == "TinyLlama/TinyLlama-1.1B-Chat-v1.0":
+        from model.LanguageModel.Trac_llama import TracLlamaForCausalLM
 
-    # Resize token embeddings for new tokens
-    model.resize_token_embeddings(len(tokenizer))
-    
-    # Set model configuration
-    model.config.seg_token_id = model_args.seg_token_id
-    model.config.use_cache = False
+        model = TracLlamaForCausalLM(config)
+    else:
+        raise NotImplementedError
 
-    if model_args.freeze_backbone:
+    model.get_model().initialize_multimodal_components()
+
+    if cmd_args.freeze_backbone:
+        print_info("Freezing backbone...")
         model.model.requires_grad_(False)
 
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
-    # Initialize multimodal components
-    print_info("Initializing multimodal components...")
-    model.get_model().initialize_multimodal_components(model_args)
-    print_info("Multimodal components initialized successfully!")
-
     # LoRA setup
     if training_args.lora_enable:
-        print_info("Setting up LoRA...")
-        try:
-            from peft import LoraConfig, get_peft_model, TaskType
+       set_up_lora(model, training_args)
 
-            # Find all linear layer names for LoRA
-            lora_module_names = find_all_linear_names(model)
-            print_info(f"LoRA target modules: {lora_module_names}")
-
-            lora_config = LoraConfig(
-                r=training_args.lora_r,
-                lora_alpha=training_args.lora_alpha,
-                target_modules=lora_module_names,
-                lora_dropout=training_args.lora_dropout,
-                bias=training_args.lora_bias,
-                task_type=TaskType.CAUSAL_LM,
-            )
-
-            model = get_peft_model(model, lora_config)
-            print_info("LoRA setup complete!")
-            print_info(f"Trainable parameters: {model.print_trainable_parameters()}")
-
-        except ImportError:
-            print_info("Warning: PEFT not available, LoRA disabled")
-            training_args.lora_enable = False
-
-    # Move model to device
-    model = model.to(training_args.device)
-    
-    # Setup data collator and dataset
-    print_info("=" * 20 + " Data preparation " + "=" * 20)
-    collator = BboxAwareCollator(
-        tokenizer=tokenizer,
-        max_length=training_args.model_max_length,
-        max_bbox_length=9,
-    )
-    
-    try:
-        ds = QA3DDataset()
-        dl = DataLoader(ds, batch_size=2, shuffle=True, collate_fn=collator)
-        print_info("Dataset and DataLoader created successfully!")
-    except Exception as e:
-        print_info(f"Warning: Failed to create dataset: {e}")
-        print_info("Creating dummy dataloader for testing...")
-        
-        # Create a simple dummy dataset for testing
-        class DummyDataset:
-            def __len__(self):
-                return 10
-            
-            def __getitem__(self, idx):
-                return {
-                    'images': torch.randn(1, 32, 256, 256),
-                    'input_ids': torch.randint(0, 1000, (20,)),
-                    'attention_masks': torch.ones(20),
-                    'labels': torch.randint(0, 1000, (20,)),
-                    'bbox_gts': torch.randn(1, 6),
-                    'bbox_masks': torch.ones(1).bool(),
-                    'answer_types': ['bbox'],
-                    'position_ids': torch.arange(20)
-                }
-        
-        dummy_ds = DummyDataset()
-        
-        def dummy_collate_fn(batch):
-            # Simple collation for testing with proper tensor cloning
-            return {
-                'images': torch.stack([item['images'].clone() for item in batch]),           # Added .clone()
-                'input_ids': torch.stack([item['input_ids'].clone() for item in batch]),     # Added .clone()
-                'attention_mask': torch.stack([item['attention_masks'].clone() for item in batch]),  # Fixed key name + .clone()
-                'labels': torch.stack([item['labels'].clone() for item in batch]),           # Added .clone()
-                'bbox_gts': torch.stack([item['bbox_gts'].clone() for item in batch]),       # Added .clone()
-                'bbox_masks': torch.stack([item['bbox_masks'].clone() for item in batch]),   # Added .clone()
-                'answer_types': [item['answer_types'][0] for item in batch],
-                'position_ids': torch.stack([item['position_ids'].clone() for item in batch]),  # Added .clone(), removed duplicate
-            }
-
-        dl = DataLoader(dummy_ds, batch_size=2, shuffle=True, collate_fn=dummy_collate_fn)
-
-    # Define a basic Trainer setup
-    print_info("=" * 20 + " Trainer Setup " + "=" * 20)
-    from transformers import Trainer, TrainingArguments
-
+    model.all_to_device(training_args.device)
     trainer = Trainer(
         model=model,
         args=TrainingArguments(
@@ -738,8 +541,16 @@ def main():
             num_train_epochs=training_args.num_train_epochs,
             logging_dir=os.path.join(training_args.output_dir, "logs"),
             eval_strategy=training_args.evaluation_strategy,  # Changed from evaluation_strategy
-            eval_steps=max(1, int(training_args.eval_steps * len(dl))) if training_args.eval_steps < 1 else int(training_args.eval_steps),  # Added eval_steps
-            logging_steps=max(1, int(training_args.logging_steps * len(dl))) if training_args.logging_steps < 1 else int(training_args.logging_steps),
+            eval_steps=(
+                max(1, int(training_args.eval_steps * len(dl)))
+                if training_args.eval_steps < 1
+                else int(training_args.eval_steps)
+            ),  # Added eval_steps
+            logging_steps=(
+                max(1, int(training_args.logging_steps * len(dl)))
+                if training_args.logging_steps < 1
+                else int(training_args.logging_steps)
+            ),
             save_strategy=training_args.save_strategy,
             save_steps=training_args.save_steps,
             # eval_steps=int(training_args.eval_steps * len(dl)) if training_args.eval_steps < 1 else training_args.eval_steps,  # Added eval_steps
@@ -760,8 +571,8 @@ def main():
             remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
             seed=training_args.seed,  # Added seed
         ),
-        train_dataset=dl.dataset,
-        eval_dataset=dl.dataset,
+        train_dataset=train_set,
+        eval_dataset=val_set,
         tokenizer=tokenizer,
         data_collator=collator,
         compute_metrics=compute_metrics,

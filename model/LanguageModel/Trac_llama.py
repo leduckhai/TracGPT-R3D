@@ -341,10 +341,10 @@ if __name__ == "__main__":
 
     special_tokens = [
         "<im_patch>",
-        "<bx_start>",
-        "<bx_end>",
-        "<image>",
-        "<image_newline>",
+        # "<bx_start>",
+        # "<bx_end>",
+        # "<image>",
+        # "<image_newline>",
         "<end>",
     ]
 

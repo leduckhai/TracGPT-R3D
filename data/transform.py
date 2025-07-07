@@ -27,45 +27,29 @@ class TrackCrop(MapTransform):
         d["cropped_size"] = d[self.image_key].shape
         return d
 
-class NormalizeBBox3D(MapTransform):
-    """
-    Adjust bboxes after cropping and resizing.
-    """
-    def __init__(self, keys, crop_origin_key="crop_origin", cropped_size_key="cropped_size", target_size=[32, 256, 256]):
+
+class ResizeBboxAndImage(MapTransform):
+    def __init__(self, keys,  target_size=[32, 256, 256]):
         super().__init__(keys)
-        self.crop_origin_key = crop_origin_key
-        self.cropped_size_key = cropped_size_key
-        self.target_size = np.array(target_size)
-
-    def __call__(self, data: Mapping[Hashable, np.ndarray]):
-        d = dict(data)
-        crop_origin = np.array(d[self.crop_origin_key])
-        cropped_size = np.array(d[self.cropped_size_key])
-        scale = self.target_size / cropped_size
-
-        for key in self.keys:
-            bbox = np.array(d[key])  # [z, y, x, dz, dy, dx]
-            bbox[:3] = (bbox[:3] - crop_origin) * scale  # adjust position
-            bbox[3:] = bbox[3:] * scale  # scale size
-            d[key] = bbox
-        return d
-
-class ResizeBBox3D(MapTransform):
-    def __init__(self, keys, orig_size, target_size=[32, 256, 256]):
-        super().__init__(keys)
-        self.orig_size = np.array(orig_size, dtype=np.float32)
         self.target_size = np.array(target_size, dtype=np.float32)
-        self.scale = self.target_size  # [D, H, W]
+        self.scale = self.target_size  
 
     def __call__(self, data: Mapping[Hashable, np.ndarray]):
         d = dict(data)
-        for key in self.keys:
-            bboxes=[]
-            for bbox in d[key]:
-                bbox = np.array(bbox, dtype=np.float32)
-                bbox[:3] = bbox[:3] * self.scale
-                bbox[3:] = bbox[3:] * self.scale
-                bboxes.append(bbox)
-            d[key] = np.array(bboxes, dtype=np.float32)
+        image=d["image"]
+        image_shape=image.shape
+        scale = self.target_size / image.shape
+
+        # bbox=bbox*image_shape
+        # bbox=bbox*scale
+        # bbox=bbox/self.target_size 
+        # for key in self.keys:
+        #     bboxes=[]
+        #     for bbox in d[key]:
+        #         bbox = np.array(bbox, dtype=np.float32)
+        #         bbox[:3] = bbox[:3] * self.scale
+        #         bbox[3:] = bbox[3:] * self.scale
+        #         bboxes.append(bbox)
+        #     d[key] = np.array(bboxes, dtype=np.float32)
           
         return d

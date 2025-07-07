@@ -7,36 +7,45 @@ import pickle
 import sys
 import os
 from dotenv import load_dotenv
-from types import SimpleNamespace
+import random
+from sklearn.model_selection import train_test_split
 load_dotenv()
 ROOT = os.getenv("ROOT")
 sys.path.append(ROOT)
-from transformers import AutoTokenizer
 from data_process.util import convert_list_slice_paths_to_3d
 import monai.transforms as mtf
-import random
 import os
 import numpy as np
 import json
 from monai.transforms import Compose, ResizeD
-from typing import Mapping, Hashable
-from data.transform import  ResizeBBox3D
-from collections import defaultdict
+from monai.transforms import ScaleIntensityRange
+from monai.transforms import NormalizeIntensityd, ScaleIntensityRanged
+
 
 class TracDataset(Dataset):
     def __init__(
         self,
+        data_paths,
+        image_path,
         mode="train",
-        root_dir="/root/VLMTrac",
-        args=None,
+        n_sample=-1,
+        image_shape=[32, 256, 256],
     ):
+        self.image_shape = image_shape
+
         self.mode = mode
         self.base_transform = Compose(
             [
-                ResizeD(keys=["image"], spatial_size=[32, 256, 256], mode="bilinear"),
-                ResizeBBox3D(
-                    keys=["bboxes"], orig_size=[50, 256, 412], target_size=[32, 256, 256]
+             
+                ScaleIntensityRanged(
+                    keys=["image"],
+                    a_min=0,  # min value (from your data)
+                    a_max=255,  # max value (from your data)
+                    b_min=0.0,  # target min
+                    b_max=1.0,  # target max
+                    clip=True,  # clip values outside [a_min, a_max]
                 ),
+                ResizeD(keys=["image"], spatial_size=[32, 256, 256], mode="bilinear"),
             ]
         )
 
@@ -49,81 +58,87 @@ class TracDataset(Dataset):
                 mtf.RandScaleIntensityd(keys="image", factors=0.1, prob=0.5),
                 mtf.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.5),
                 mtf.ToTensord(keys=["image"], dtype=torch.float),
-                mtf.ToTensord(keys=["seg"], dtype=torch.int),
             ]
         )
 
         val_transform = mtf.Compose(
             [
                 mtf.ToTensord(keys=["image"], dtype=torch.float),
-                mtf.ToTensord(keys=["seg"], dtype=torch.int),
             ]
         )
-        data_dir=os.path.join(root_dir,"chunks",mode, "data")
-        self.img_dir = os.path.join(root_dir, "2d_data",mode,"image")
-        assert os.path.exists(data_dir) , f"{data_dir} does not exist"
-        assert os.path.exists(self.img_dir) , f"{self.img_dir} does not exist"
-        
-        data_paths = [
-            os.path.join(data_dir, record) for record in os.listdir(data_dir)
-        ]
+        self.img_dir = image_path
 
-        self.qa_banks=[]
-        qa_maps={
-            "Q1":"A1",
-            "Q2":"A2",
-            "Q3":"A3",
-            "Q4":"A4",
+
+        self.qa_banks = []
+        qa_maps = {
+            "Q1": "A1",
+            "Q2": "A2",
+            "Q3": "A3",
+            "Q4": "A4",
         }
         for path in data_paths:
             with open(path, "r") as f:
                 data = json.load(f)
 
             for sample in data:
-                for q,a in qa_maps.items():
-                    data_point={
-                        'slice order':sample['slice order'],
-                        'Patient ID':sample['Patient ID'],
-                        "question":sample[q],
-                        "answer":sample[a],
+                for q, a in qa_maps.items():
+                    data_point = {
+                        "slice_order": sample["slice order"],
+                        "Patient_ID": sample["Patient ID"],
+                        "question": sample[q],
+                        "answer": sample[a],
                     }
-                    if q=="Q1":
-                        data_point["answer_type"]='bbox_3d'
-                        data_point["bbox_3d"]=sample[a]
+                    if q == "Q1":
+                        data_point["answer_type"] = "bbox_3d"
+                        data_point["bbox_3d"] = sample[a]
                     else:
-                        data_point["answer_type"]='text'
-                        data_point["bbox_3d"]=None
+                        data_point["answer_type"] = "text"
+                        data_point["bbox_3d"] = None
                     self.qa_banks.append(data_point)
-            
-            
+        if n_sample != -1:
+            self.qa_banks = self.qa_banks[:n_sample]
+
     def __len__(self):
         return len(self.qa_banks)
-   
+
     def __getitem__(self, idx):
         data_point = self.qa_banks[idx]
-        slice_order = data_point["slice order"]
-        data_point["slice_order"]=data_point["slice order"]
-        del data_point["slice order"]
-        data_point["patient_id"] = data_point["Patient ID"]
-        patient_id = data_point["Patient ID"]
+        slice_order = data_point["slice_order"]
+        patient_id = data_point["Patient_ID"]
 
         image_path = [
-            os.path.join(self.img_dir, patient_id, f"{s}.pkl")
-            for s in slice_order
+            os.path.join(self.img_dir, patient_id, f"{s}.pkl") for s in slice_order
         ]
         for path in image_path:
-            assert os.path.exists(path) , f"{path} does not exist"
+            assert os.path.exists(path), f"{path} does not exist"
         image_3d = convert_list_slice_paths_to_3d(image_path)
+        print("max", image_3d.max(), image_3d.min())
+        image_dict = self.base_transform({"image": image_3d})
 
-        data_point["image"] = image_3d
+        data_point["image"] = image_dict["image"]
         return data_point
 
-
-
+def load_data():
+    train_sample=50
+    val_sample=50
+    test_sample=50
+    train_val_dir = "/root/VLMTrac/chunks/train/data"
+    image_path="/root/VLMTrac/2d_data/train/image"
+    data_paths = [os.path.join(train_val_dir, record) for record in os.listdir(train_val_dir)]
+    train_paths, test_paths = train_test_split(
+        data_paths, test_size=0.2, random_state=42
+    )
+    train_paths,val_paths = train_test_split(
+        train_paths, test_size=0.2, random_state=42
+    )
+    train_set=TracDataset(data_paths=train_paths, image_path=image_path, mode="train", n_sample=train_sample)
+    val_set=TracDataset(data_paths=val_paths,image_path=image_path, mode="val", n_sample=val_sample)
+    test_set=TracDataset(data_paths=test_paths,image_path=image_path, mode="test", n_sample=test_sample)
+    return train_set, val_set, test_set
 if __name__ == "__main__":
     import os
-    import random
-    from sklearn.model_selection import train_test_split
+    
+
     # tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
     # train_val_dir = "/home/ubuntu/repo/TracGPT-R3D/VLMTrac/50_chunk_data/train"
     # patient_records = os.listdir(os.path.join(train_val_dir, "data"))
@@ -132,23 +147,53 @@ if __name__ == "__main__":
     #     patient_records, test_size=0.2, random_state=42
     # )
 
-
-    train_set = TracDataset( mode="train")
-    for i,sample in enumerate( train_set):
-        print("keys", sample.keys())
+    # train_set = TracDataset(mode="train")
+    train_set, val_set, test_set = load_data()
+    for i, sample in enumerate(train_set):
+        print("train set")
         slice_order = sample["slice_order"]
-        patient_id = sample["patient_id"]
+        patient_id = sample["Patient_ID"]
         question = sample["question"]
         answer = sample["answer"]
         answer_type = sample["answer_type"]
         bbox_3d = sample["bbox_3d"]
         image = sample["image"]
-        print("image shape", image.shape,image.min(),image.max())
+        print("image shape", image.shape, image.min(), image.max())
         print("answer type", answer_type)
-        print ("question", question
-        )
+        print("question", question)
         print("answer", answer)
         print("bbox", bbox_3d)
-        if i==3:
+        if i == 3:
             break
-    
+    for i, sample in enumerate(val_set):
+        print("val set")
+        slice_order = sample["slice_order"]
+        patient_id = sample["Patient_ID"]
+        question = sample["question"]
+        answer = sample["answer"]
+        answer_type = sample["answer_type"]
+        bbox_3d = sample["bbox_3d"]
+        image = sample["image"]
+        print("image shape", image.shape, image.min(), image.max())
+        print("answer type", answer_type)
+        print("question", question)
+        print("answer", answer)
+        print("bbox", bbox_3d)
+        if i == 3:
+            break
+    for i, sample in enumerate(test_set):
+        print("test set")
+        slice_order = sample["slice_order"]
+        patient_id = sample["Patient_ID"]
+        question = sample["question"]
+        answer = sample["answer"]
+        answer_type = sample["answer_type"]
+        bbox_3d = sample["bbox_3d"]
+        image = sample["image"]
+        print("image shape", image.shape, image.min(), image.max())
+        print("answer type", answer_type)
+        print("question", question)
+        print("answer", answer)
+        print("bbox", bbox_3d)
+        if i == 3:
+            break
