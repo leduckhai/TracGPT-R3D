@@ -30,6 +30,7 @@ from model.multimodel_processor import MultimodalProcessor
 from model.bbox3d.builder import BBox3DPredictor
 from model.Encoder.encoder import build_vision_tower
 from model.Projector.projector import build_mm_projector
+from transformers import PreTrainedModel, PretrainedConfig
 
 
 class VisionEncoder(nn.Module):
@@ -56,19 +57,15 @@ class VisionEncoder(nn.Module):
             self.mm_projector = build_mm_projector(self.mm_projector_config)
             print("MM projector built successfully.")
             self._is_built = True
-            
+
     def encode_images(self, images: torch.Tensor) -> Optional[torch.Tensor]:
         """Encode images to features"""
         if not self._is_built or images is None:
             return None
 
-        try:
-            image_features = self.vision_tower(images)
-            image_features = self.mm_projector(image_features)
-            return image_features
-        except Exception as e:
-            print(f"Warning: Failed to encode images: {e}")
-            return None
+        image_features = self.vision_tower(images)
+        image_features = self.mm_projector(image_features)
+        return image_features
 
     def load_pretrained_weights(self, vision_path: str, projector_path: str):
         """Load pretrained weights"""
@@ -116,7 +113,7 @@ class TracLlama3Model(nn.Module):
             self.model_tag = "tiny-llama"
             model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, device_map="auto", torch_dtype=torch.float32
+                model_name, device_map=None, torch_dtype=torch.float32
             )
             self.model.resize_token_embeddings(config.vocab_size)
             self.module_configs = module_config.tiny_llama
@@ -150,27 +147,30 @@ class TracLlama3Model(nn.Module):
         #     self.vision_encoder.load_pretrained_weights(vision_path, projector_path)
 
 
-class TracLlamaForCausalLM(nn.Module):
+class TracLlamaConfig(PretrainedConfig):
+    model_type = "TracLlama3Model"
+
+    def __init__(self, img_token_id=32000,vocab_size=32002, **kwargs):
+        kwargs["vocab_size"] = vocab_size
+        super().__init__(**kwargs)
+        self.img_token_id = img_token_id
+        self.child_config = AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+        self.child_config.img_token_id = img_token_id
+        self.child_config.vocab_size=vocab_size
+
+class TracLlamaForCausalLM(PreTrainedModel):
     """Trac Phi3 for causal language modeling with 3D bbox prediction"""
 
-    _model_cache = {}
+    config_class = TracLlamaConfig
 
     def __init__(self, config):
         print("init Trac llama")
-        super().__init__()
-        self.model = self.init_model(config)
+        super().__init__(config)
+        self.model = self.init_model(config.child_config)
         print("finish init base model")
         self.vocab_size = config.vocab_size
         self.embed_tokens = self.model.embed_tokens
 
-    # @classmethod
-    # def init_model(cls, config):
-    #     key = id(config)  # use object identity for cache key
-    #     if key not in cls._model_cache:
-    #         if not isinstance(config, PretrainedConfig):
-    #             raise ValueError("config must be an instance of PretrainedConfig")
-    #         cls._model_cache[key] = TracLlama3Model(config)
-    #     return cls._model_cache[key]
     def init_model(self, config):
         return TracLlama3Model(config)
 
@@ -225,10 +225,14 @@ class TracLlamaForCausalLM(nn.Module):
             attention_mask=attention_masks,
             labels=labels,
             output_hidden_states=output_hidden_states,
-            **{k: v for k, v in kwargs.items() if k not in ["input_ids","attention_mask","labels","inputs_embeds"]},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["input_ids", "attention_mask", "labels", "inputs_embeds"]
+            },
         )
 
-        if enable_bboxes and image_features is not None :
+        if enable_bboxes and image_features is not None:
             outputs = self._handle_bbox_prediction(
                 outputs, image_features, bbox_gts, bbox_masks
             )
@@ -261,7 +265,12 @@ class TracLlamaForCausalLM(nn.Module):
             text_features = outputs.hidden_states[-1][bbox_samples]
             bbox_predictions = predictor(vision_features, text_features)
 
-            bbox_loss = compute_bbox_loss(bbox_preds=bbox_predictions["filtered_bbox_pred"],conf_preds=bbox_predictions["filtered_conf_pred"],targets = targets,masks = masks)
+            bbox_loss = compute_bbox_loss(
+                bbox_preds=bbox_predictions["filtered_bbox_pred"],
+                conf_preds=bbox_predictions["filtered_conf_pred"],
+                targets=targets,
+                masks=masks,
+            )
 
             outputs.loss = outputs.loss + bbox_loss
             outputs["bbox_3d_loss"] = bbox_loss
@@ -280,26 +289,34 @@ class TracLlamaForCausalLM(nn.Module):
     ):
         """Generate with optional 3D bbox prediction"""
         if images is not None:
-            (inputs_embeds, _, image_features) = (
-                self.prepare_inputs_for_multimodal(input_ids, images, **kwargs)
+            (inputs_embeds, _, image_features) = self.prepare_inputs_for_multimodal(
+                input_ids, images, **kwargs
             )
             kwargs["inputs_embeds"] = inputs_embeds
             kwargs["attention_mask"] = attention_masks
             kwargs["image_features"] = image_features
-        
+
         forward_output = self.forward(**kwargs)
-        kwargs.pop("image_features", None)  
-        
-          
+        kwargs.pop("image_features", None)
+
         outputs = self.model.generate(
-            # inputs_embeds=inputs_embeds,
-            # attention_mask=attention_masks,
             output_hidden_states=False, return_dict_in_generate=True, **kwargs
         )
-        # outputs["bbox_3d_pred"] =forward_output["bbox_3d_pred"]
-        
+
         return outputs, forward_output["bbox_3d_pred"]
 
+    def prepare_inputs_for_generation(
+        self, input_ids, past_key_values=None, attention_mask=None, **kwargs
+    ):
+        if past_key_values is not None:
+            input_ids = input_ids[:, -1:]
+
+        return {
+            "input_ids": input_ids,
+            "past_key_values": past_key_values,
+            "attention_mask": attention_mask,
+            **kwargs,
+        }
 
     def _process_bbox_generation(self, outputs, images):
         """Process 3D bbox prediction during generation"""
@@ -327,6 +344,10 @@ class TracLlamaForCausalLM(nn.Module):
 
 from transformers import AutoConfig, AutoModelForCausalLM
 
+AutoConfig.register("TracLlama3Model", TracLlamaConfig)
+AutoModelForCausalLM.register(TracLlamaConfig, TracLlamaForCausalLM)
+
+# Register model to enable AutoModel.from_pretrained()
 # AutoConfig.register("trac-phi3", TracPhi3Config)
 # AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 if __name__ == "__main__":
@@ -335,6 +356,7 @@ if __name__ == "__main__":
     from eval import evaluate
     from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
     from transformers import AutoConfig, AutoModelForCausalLM
+    from data.dataloader import load_data
 
     model_max_length = 512
     tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
@@ -361,65 +383,68 @@ if __name__ == "__main__":
         token_name=image_token_name,
     )
 
-    ds = QA3DDataset()
-    dl = DataLoader(ds, batch_size=2, shuffle=True, collate_fn=collator)
+    # ds = QA3DDataset()
+    train_set, val_set, test_set = load_data()
+    dl = DataLoader(train_set, batch_size=2, shuffle=True, collate_fn=collator)
     img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
 
-    config = AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-    config.img_token_id = img_token_id
-    print("before", config.vocab_size)
-    config.vocab_size = len(tokenizer)
+    print("vocab size", len(tokenizer)) 
+    config = TracLlamaConfig(
+        img_token_id=img_token_id, vocab_size=len(tokenizer)
+    )
+    # config=AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+
     model = TracLlamaForCausalLM(config)
 
     model.get_model().initialize_multimodal_components()
-    # model = model.to("cuda")
     model.all_to_device("cuda")
-    evaluate(model, dl,tokenizer,save_path="eval_result")
-    # for i, batch in enumerate(dl):
-    #     (
-    #         images,
-    #         input_ids,
-    #         attention_mask,
-    #         labels,
-    #         bbox_gt,
-    #         bbox_mask,
-    #         position_ids,
-    #         answer_types,
-    #         questions,
-    #         answers
-    #     ) = batch.values()
-    #     images = images.to("cuda")
-    #     input_ids = input_ids.to("cuda")
-    #     attention_mask = attention_mask.to("cuda")
-    #     labels = labels.to("cuda")
-    #     bbox_gt = bbox_gt.to("cuda")
-    #     bbox_mask = bbox_mask.to("cuda")
-    #     position_ids = position_ids.to("cuda")
+    # evaluate(model, dl,tokenizer,save_path="eval_result")
+    for i, batch in enumerate(dl):
+        (
+            images,
+            input_ids,
+            attention_mask,
+            labels,
+            bbox_gt,
+            bbox_mask,
+            position_ids,
+            answer_types,
+            questions,
+            answers,
+        ) = batch.values()
+        images = images.to("cuda")
+        print("img shape", images.shape)
+        input_ids = input_ids.to("cuda")
+        attention_mask = attention_mask.to("cuda")
+        labels = labels.to("cuda")
+        bbox_gt = bbox_gt.to("cuda")
+        bbox_mask = bbox_mask.to("cuda")
+        position_ids = position_ids.to("cuda")
 
-    #     if i == 0:
-    #         print("forward pass")
-    #         print("mask", bbox_mask)
-    #         print("gt", bbox_gt)
-    #         outputs = model(
-    #             input_ids=input_ids,
-    #             images=images,
-    #             # bbox_gts=bbox_gt,
-    #             # bbox_masks=bbox_mask,
-    #             labels=labels,
-    #             attention_masks=attention_mask,
-    #             position_ids=position_ids,
-    #         )
-    #         print("outputs bobx", outputs["bbox_3d_pred"])
+        if i == 0:
+            print("forward pass")
+            print("mask", bbox_mask)
+            print("gt", bbox_gt)
+            outputs = model(
+                input_ids=input_ids,
+                images=images,
+                # bbox_gts=bbox_gt,
+                # bbox_masks=bbox_mask,
+                labels=labels,
+                attention_masks=attention_mask,
+                position_ids=position_ids,
+            )
+            # print("outputs bobx", outputs["bbox_3d_pred"])
     #     elif i == 1:
     #         print("generation")
     #         outputs,bbox_pred = model.generate(input_ids=input_ids, images=images)
     #         print("type output",type(outputs))
     #         # print("Generated token IDs:", outputs.sequences[0])
     #         generated_text = tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
-         
+
     #         print("bbox pred", bbox_pred)
     #         for i, text in enumerate(generated_text):
     #             print(f"Output {i}: {text}")
-        
+
     #     else:
     #         break

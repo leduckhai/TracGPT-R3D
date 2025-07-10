@@ -132,6 +132,7 @@ class BBox3DPredictor(nn.Module):
 
         """
         losses = []
+        # print("bbox pred shape",len(bbox_preds), "target",targets.shape)
         for b in range(len(bbox_preds)):
             bbox_pred = bbox_preds[b]  # [num_preds, 6], in center format
             mask = masks[b]  # [max_num_gt]
@@ -145,7 +146,7 @@ class BBox3DPredictor(nn.Module):
             bbox_pred_minmax = self.bbox3d_head.convert_model_to_gt_format(bbox_pred)
             matches = hungarian_iou_matching(bbox_pred_minmax, gt_boxes_minmax)
             for pred_idx, gt_idx, iou in matches:
-                pred_box = bbox_preds[pred_idx]  # [6], center format
+                pred_box = bbox_pred[pred_idx]  # [6], center format
                 gt_box = gt_boxes_minmax[gt_idx]  # [6], center format
                 loss = F.smooth_l1_loss(pred_box, gt_box)
                 losses.append(loss)
@@ -203,7 +204,7 @@ def hungarian_iou_matching(pred_boxes, gt_boxes):
 
     # Compute IoU matrix: [N, M]
     iou_matrix = compute_3d_iou_matrix(pred_boxes, gt_boxes)  # assumed implemented
-    cost_matrix = 1.0 - iou_matrix.cpu().numpy()  # Cost = 1 - IoU (lower is better)
+    cost_matrix = 1.0 - iou_matrix.detach().cpu().numpy()  # Cost = 1 - IoU (lower is better)
 
     # Run Hungarian algorithm
     row_ind, col_ind = linear_sum_assignment(cost_matrix)

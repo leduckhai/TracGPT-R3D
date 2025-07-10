@@ -91,10 +91,8 @@ class BboxAwareCollator:
         self.max_length = max_length
         self.max_bbox_length = max_bbox_length
         self.end_token = end_token
-        # self.image_tk=f"<image_context>  {token_name*num_vision_token} <image_context>"
+        self.image_tk_name=token_name
         self.image_tk = f"<image_context> {' '.join([token_name] * num_vision_token)} <image_context>"
-
-    # Convert to 1D tensor
     def pad_bboxes_to_fixed_size(self, bboxes: List[List[float]], target_size: int) -> List[List[float]]:
         """Pad or truncate bboxes to fixed size"""
         if len(bboxes) >= target_size:
@@ -177,6 +175,7 @@ class BboxAwareCollator:
             question_len = len(self.tokenizer(question_text, return_tensors="pt")["input_ids"][0])
             label[:question_len] = -100
             labels.append(label)
+            # print("n vision token", (encoded['input_ids']==self.tokenizer.convert_tokens_to_ids(self.image_tk_name)).sum().item())
         
         position_ids = torch.arange(0, self.max_length).expand(len(batch), -1).long()
         

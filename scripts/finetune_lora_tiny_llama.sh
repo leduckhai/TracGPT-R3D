@@ -15,7 +15,7 @@ python  main_v2.py \
     --bf16 0 \
     --fp16 1\
     --output_dir ./output/TinyLLama-finetune-0000 \
-    --num_train_epochs 5 \
+    --num_train_epochs 1 \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \

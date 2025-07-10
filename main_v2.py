@@ -1,24 +1,15 @@
 import os
 import logging
 import argparse
-from typing import Optional, List, Dict
-from dataclasses import dataclass, asdict
 import json
-import numpy as np
 import torch
 import torch.nn.functional as F
-import transformers
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
-from transformers import Phi3Config, Phi3Model, Phi3ForCausalLM
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from model.LanguageModel.Trac_phi3 import TracPhi3ForCausalLM, TracPhi3Config
-from collator import QA3DDataset, BboxAwareCollator
+from collator import  BboxAwareCollator
 from torch.utils.data import DataLoader
-import torch.nn as nn
-from typing import Union, Tuple
 from data.dataloader import load_data
 from transformers import Trainer, TrainingArguments
-
+from model.LanguageModel.Trac_llama import TracLlamaForCausalLM,TracLlamaConfig
 # Disable distributed training detection
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
@@ -91,13 +82,13 @@ def create_training_args():
     args.seed = 42
     args.optim = "adamw_torch"
 
-    # Training configuration - updated with new parameters
-    args.bf16 = False  # Changed to False (0)
-    args.fp16 = True  # Changed to True (1)
-    args.output_dir = "./LaMed/output/LaMed-Phi3-4B-finetune-0000"
-    args.num_train_epochs = 5
+    args.bf16 = False  
+    args.fp16 = True 
+    args.output_dir = "./output/Tinyllama-finetune-0000/"
+    args.num_train_epochs = 3
     args.per_device_train_batch_size = 8
     args.per_device_eval_batch_size = 4
+    args.per_device_test_batch_size = 1
     args.gradient_accumulation_steps = 1
     args.evaluation_strategy = "steps"
     args.eval_accumulation_steps = 1
@@ -109,20 +100,18 @@ def create_training_args():
     args.weight_decay = 0.0
     args.warmup_ratio = 0.03
     args.lr_scheduler_type = "cosine"
-    args.logging_steps = 0.001
+    args.logging_steps = 4
     args.gradient_checkpointing = False
     args.dataloader_pin_memory = True
     args.dataloader_num_workers = 8
     args.report_to = "tensorboard"
 
-    # Single process training
     args.local_rank = -1
     args.world_size = 1
     args.process_index = 0
     args.n_gpu = 1 if torch.cuda.is_available() else 0
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Additional required attributes for Trainer
     args.do_train = True
     args.do_eval = True
     args.do_predict = False
@@ -233,12 +222,10 @@ def safe_save_model_for_hf_trainer(trainer, output_dir: str):
             torch.save(weight_to_save, os.path.join(output_dir, f"mm_projector.bin"))
         return
 
-    # Standard model saving
     state_dict = trainer.model.state_dict()
     cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
     del state_dict
 
-    # Save model and tokenizer
     trainer.model.save_pretrained(output_dir, state_dict=cpu_state_dict)
     if hasattr(trainer, "tokenizer") and trainer.tokenizer is not None:
         trainer.tokenizer.save_pretrained(output_dir)
@@ -248,7 +235,6 @@ def find_all_linear_names(model):
     """Find all linear layer names for LoRA"""
     cls = torch.nn.Linear
     lora_module_names = set()
-    # Process of elimination: LoRA only targets on LLM backbone
     ignore_keywords = [
         "vision_tower",
         "mm_projector",
@@ -273,7 +259,6 @@ def parse_arguments():
         description="Medical LLM Training with Enhanced Parameters"
     )
 
-    # Model arguments
     parser.add_argument("--version", type=str, default="v0", help="Model version")
     parser.add_argument(
         "--model_name_or_path",
@@ -323,16 +308,16 @@ def parse_arguments():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./LaMed/output/LaMed-Phi3-4B-finetune-0000",
+        default="./output/tinyllama-0000",
         help="Output directory",
     )
     parser.add_argument(
-        "--num_train_epochs", type=float, default=5.0, help="Number of training epochs"
+        "--num_train_epochs", type=int, default=5, help="Number of training epochs"
     )
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=8,
+        default=4,
         help="Train batch size per device",
     )
     parser.add_argument(
@@ -377,7 +362,7 @@ def parse_arguments():
         "--lr_scheduler_type", type=str, default="cosine", help="LR scheduler type"
     )
     parser.add_argument(
-        "--logging_steps", type=float, default=0.001, help="Logging steps"
+        "--logging_steps", type=float, default=4, help="Logging steps"
     )
     parser.add_argument(
         "--gradient_checkpointing",
@@ -402,9 +387,7 @@ def parse_arguments():
     parser.add_argument(
         "--report_to", type=str, default="tensorboard", help="Reporting platform"
     )
-    parser.add_argument(
-        "--model_max_length", type=int, default=512, help="Max model length"
-    )
+    
 
     return parser.parse_args()
 
@@ -419,18 +402,29 @@ def main():
     print("training_args:", training_args)
 
     # Override with command line arguments
-    for key, value in vars(cmd_args).items():
-        if hasattr(data_args, key):
-            setattr(data_args, key, value)
-        elif hasattr(training_args, key):
-            # Handle special conversions for training args
-            if key == "bf16":
-                setattr(training_args, key, bool(value))
-            elif key == "fp16":
-                setattr(training_args, key, bool(value))
-            else:
-                setattr(training_args, key, value)
+    # from collections import OrderedDict,defaultdict
+    # ptr_map = defaultdict(list)
+    # # Recursively check all nested modules
+    # def _check_module(module, prefix=""):
+    #     for name, param in module.named_parameters(recurse=False):
+    #         ptr = param.data_ptr()
+    #         ptr_map[ptr].append(f"{prefix}{name}")
+        
+    #     for name, child in module.named_children():
+    #         _check_module(child, prefix=f"{prefix}{name}.")
 
+    # _check_module(model)
+    
+    # # Filter to show only shared parameters
+    # shared = {ptr: names for ptr, names in ptr_map.items() if len(names) > 1}
+    # if shared:
+    #     print("⚠️ SHARED PARAMETERS IN NESTED MODEL:")
+    #     for ptr, names in shared.items():
+    #         print(f"Memory {ptr}:")
+    #         for n in names:
+    #             print(f"  → {n}")
+    # else:
+    #     print("No shared parameters found in nested structure.")
     # Set random seed
     torch.manual_seed(training_args.seed)
     if torch.cuda.is_available():
@@ -453,17 +447,12 @@ def main():
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         cmd_args.model_name_or_path,
-        padding_side="right",
-        use_fast=False,
+        # padding_side="right",
+        # use_fast=False,
     )
 
-    # Add special tokens
     special_tokens = [
         "<im_patch>",
-        # "<bx_start>",
-        # "<bx_end>",
-        # "<image>",
-        # "<image_newline>",
         "<end>",
     ]
     image_token_name = "<im_patch>"
@@ -484,42 +473,41 @@ def main():
     print("val set", len(val_set))
     print("test set", len(test_set))
 
-    train_dataloader = DataLoader(
-        train_set,
-        batch_size=training_args.per_device_train_batch_size,
-        collate_fn=collator,
-        pin_memory=cmd_args.dataloader_pin_memory,
-        num_workers=cmd_args.dataloader_num_workers,
-    )
-    val_dataloader = DataLoader(
-        val_set,
-        batch_size=training_args.per_device_eval_batch_size,
-        collate_fn=collator,
-        pin_memory=cmd_args.dataloader_pin_memory,
-        num_workers=cmd_args.dataloader_num_workers,
-    )
-    test_dataloader = DataLoader(
-        test_set,
-        batch_size=training_args.per_device_test_batch_size,
-        collate_fn=collator,
-        pin_memory=cmd_args.dataloader_pin_memory,
-    )
+    # train_dataloader = DataLoader(
+    #     train_set,
+    #     batch_size=training_args.per_device_train_batch_size,
+    #     collate_fn=collator,
+    #     pin_memory=cmd_args.dataloader_pin_memory,
+    #     num_workers=cmd_args.dataloader_num_workers,
+    # )
+    # val_dataloader = DataLoader(
+    #     val_set,
+    #     batch_size=training_args.per_device_eval_batch_size,
+    #     collate_fn=collator,
+    #     pin_memory=cmd_args.dataloader_pin_memory,
+    #     num_workers=cmd_args.dataloader_num_workers,
+    # )
+    # test_dataloader = DataLoader(
+    #     test_set,
+    #     batch_size=training_args.per_device_test_batch_size,
+    #     collate_fn=collator,
+    #     pin_memory=cmd_args.dataloader_pin_memory,
+    # )
 
     img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
+    config = TracLlamaConfig(
+        vocab_size=len(tokenizer), img_token_id=img_token_id
+    )
 
-    config = AutoConfig.from_pretrained(cmd_args.model_name_or_path)
-    config.img_token_id = img_token_id
-    config.vocab_size = len(tokenizer)
 
     if cmd_args.model_name_or_path == "TinyLlama/TinyLlama-1.1B-Chat-v1.0":
-        from model.LanguageModel.Trac_llama import TracLlamaForCausalLM
 
         model = TracLlamaForCausalLM(config)
     else:
         raise NotImplementedError
 
     model.get_model().initialize_multimodal_components()
-
+    
     if cmd_args.freeze_backbone:
         print_info("Freezing backbone...")
         model.model.requires_grad_(False)
@@ -532,6 +520,9 @@ def main():
        set_up_lora(model, training_args)
 
     model.all_to_device(training_args.device)
+    print("eval step", training_args.eval_steps)
+    print("logging step", training_args.logging_steps)
+    print("output dir", training_args.output_dir)
     trainer = Trainer(
         model=model,
         args=TrainingArguments(
@@ -541,20 +532,10 @@ def main():
             num_train_epochs=training_args.num_train_epochs,
             logging_dir=os.path.join(training_args.output_dir, "logs"),
             eval_strategy=training_args.evaluation_strategy,  # Changed from evaluation_strategy
-            eval_steps=(
-                max(1, int(training_args.eval_steps * len(dl)))
-                if training_args.eval_steps < 1
-                else int(training_args.eval_steps)
-            ),  # Added eval_steps
-            logging_steps=(
-                max(1, int(training_args.logging_steps * len(dl)))
-                if training_args.logging_steps < 1
-                else int(training_args.logging_steps)
-            ),
+            eval_steps=int(training_args.eval_steps) if training_args.eval_steps else None,
+            logging_steps=int(training_args.logging_steps),
             save_strategy=training_args.save_strategy,
             save_steps=training_args.save_steps,
-            # eval_steps=int(training_args.eval_steps * len(dl)) if training_args.eval_steps < 1 else training_args.eval_steps,  # Added eval_steps
-            # logging_steps=int(training_args.logging_steps * len(dl)) if training_args.logging_steps < 1 else training_args.logging_steps,
             fp16=training_args.fp16,
             bf16=training_args.bf16,
             learning_rate=training_args.learning_rate,  # Added learning_rate
@@ -563,20 +544,21 @@ def main():
             lr_scheduler_type=training_args.lr_scheduler_type,  # Added lr_scheduler_type
             gradient_accumulation_steps=training_args.gradient_accumulation_steps,  # Added gradient_accumulation_steps
             gradient_checkpointing=training_args.gradient_checkpointing,  # Added gradient_checkpointing
-            dataloader_pin_memory=training_args.dataloader_pin_memory,  # Added dataloader_pin_memory
             dataloader_num_workers=training_args.dataloader_num_workers,  # Added dataloader_num_workers
             save_total_limit=training_args.save_total_limit,  # Added save_total_limit
             load_best_model_at_end=training_args.load_best_model_at_end,
-            report_to=training_args.report_to,
+            report_to=["tensorboard"],
             remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
             seed=training_args.seed,  # Added seed
+            save_safetensors=False,
+             dataloader_pin_memory=False,  
         ),
         train_dataset=train_set,
         eval_dataset=val_set,
         tokenizer=tokenizer,
         data_collator=collator,
-        compute_metrics=compute_metrics,
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        # compute_metrics=compute_metrics,
+        # preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
     # Start training
     trainer.train()
