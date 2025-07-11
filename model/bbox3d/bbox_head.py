@@ -58,60 +58,22 @@ class BBox3DHead(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def forward(
-        self, x, dynamic_output=True, conf_threshold=0.5, apply_constraints=True
-    ):
-        """
-        Forward pass with dynamic output capability
-        Args:
-            x: Input features [batch_size, input_dim]
-            dynamic_output: Whether to filter outputs based on confidence
-            conf_threshold: Confidence threshold for dynamic filtering
-            apply_constraints: Whether to apply bbox constraints (positive dimensions)
-        Returns:
-            Dict containing bbox predictions, confidence, and optionally classification
-        """
-        batch_size = x.shape[0]
+    def forward(self, x, dynamic_output=True, conf_threshold=0.5, apply_constraints=True):
         features = self.feature_extractor(x)
-
-        # Predict all possible bboxes
-        bbox_pred = self.bbox_head(features)  # [batch_size, 6 * max_bbox_len]
+        bbox_pred = self.bbox_head(features).view(-1, self.max_bbox_len, 6)  # [B, N, 6]
+    
+        if apply_constraints:
+            # Create new tensors for constrained values (non-inplace)
+            constrained_dims = torch.relu(bbox_pred[..., 3:])  # w, h, l > 0
+            constrained_centers = torch.clamp(bbox_pred[..., :3], 0.0, 1.0)
+            
+            # Combine using torch.cat (non-inplace)
+            bbox_pred = torch.cat([
+                constrained_centers,  # [B, N, 3]
+                constrained_dims      # [B, N, 3]
+            ], dim=-1)
         
-        bbox_pred = bbox_pred.view(
-            batch_size, self.max_bbox_len, 6
-        )  # [batch_size, max_bbox_len, 6]
-
-        # if apply_constraints:
-        #     bbox_pred = self._apply_bbox_constraints(bbox_pred)
-
-        # Confidence scores for each bbox
-        conf_pred = torch.sigmoid(
-            self.conf_head(features)
-        )  # [batch_size, max_bbox_len]
-
-        outputs = {
-            "bbox_pred": bbox_pred,
-            "conf_pred": conf_pred,
-            "raw_bbox_pred": (
-                bbox_pred if not apply_constraints else None
-            ),  # Keep raw predictions for debugging
-        }
-
-        # Classification predictions if multi-class
-        if self.cls_head is not None:
-            cls_pred = self.cls_head(
-                features
-            )  # [batch_size, num_classes * max_bbox_len]
-            cls_pred = cls_pred.view(batch_size, self.max_bbox_len, self.num_classes)
-            outputs["cls_pred"] = cls_pred
-
-        # Dynamic output filtering
-        if dynamic_output:
-            filtered_outputs = self._apply_dynamic_filtering(outputs, conf_threshold)
-            outputs.update(filtered_outputs)
-
-        return outputs
-
+        return bbox_pred
     def convert_gt_to_model_format(self, gt_boxes):
         """
         Convert ground truth boxes from [x_min, y_min, z_min, x_max, y_max, z_max]

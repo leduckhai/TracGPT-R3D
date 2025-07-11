@@ -150,13 +150,16 @@ class TracLlama3Model(nn.Module):
 class TracLlamaConfig(PretrainedConfig):
     model_type = "TracLlama3Model"
 
-    def __init__(self, img_token_id=32000,vocab_size=32002, **kwargs):
+    def __init__(self, img_token_id=32000, vocab_size=32002, **kwargs):
         kwargs["vocab_size"] = vocab_size
         super().__init__(**kwargs)
         self.img_token_id = img_token_id
-        self.child_config = AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+        self.child_config = AutoConfig.from_pretrained(
+            "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        )
         self.child_config.img_token_id = img_token_id
-        self.child_config.vocab_size=vocab_size
+        self.child_config.vocab_size = vocab_size
+
 
 class TracLlamaForCausalLM(PreTrainedModel):
     """Trac Phi3 for causal language modeling with 3D bbox prediction"""
@@ -266,8 +269,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
             bbox_predictions = predictor(vision_features, text_features)
 
             bbox_loss = compute_bbox_loss(
-                bbox_preds=bbox_predictions["filtered_bbox_pred"],
-                conf_preds=bbox_predictions["filtered_conf_pred"],
+                bbox_preds=bbox_predictions,
                 targets=targets,
                 masks=masks,
             )
@@ -351,7 +353,7 @@ AutoModelForCausalLM.register(TracLlamaConfig, TracLlamaForCausalLM)
 # AutoConfig.register("trac-phi3", TracPhi3Config)
 # AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 if __name__ == "__main__":
-    from collator import QA3DDataset, BboxAwareCollator
+    from collator import BboxAwareCollator
     from torch.utils.data import DataLoader
     from eval import evaluate
     from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
@@ -379,58 +381,58 @@ if __name__ == "__main__":
         token_name=image_token_name,
     )
 
-    train_set, val_set, test_set = load_data()
+    train_set, val_set, test_set = load_data(bbox_only=True)
+    print("len trainset", len(train_set))
     dl = DataLoader(train_set, batch_size=2, shuffle=True, collate_fn=collator)
     img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
 
-    print("vocab size", len(tokenizer)) 
-    config = TracLlamaConfig(
-        img_token_id=img_token_id, vocab_size=len(tokenizer)
-    )
+    print("vocab size", len(tokenizer))
+    config = TracLlamaConfig(img_token_id=img_token_id, vocab_size=len(tokenizer))
     # config=AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
 
     model = TracLlamaForCausalLM(config)
 
     model.get_model().initialize_multimodal_components()
     model.all_to_device("cuda")
-    evaluate(model, dl,tokenizer,save_path="eval_result",skip_text_question=True)
-    # for i, batch in enumerate(dl):
-    #     (
-    #         images,
-    #         input_ids,
-    #         attention_mask,
-    #         labels,
-    #         bbox_gt,
-    #         bbox_mask,
-    #         position_ids,
-    #         answer_types,
-    #         questions,
-    #         answers,
-    #     ) = batch.values()
-     
-    #     images = images.to("cuda")
-    #     print("img shape", images.shape)
-    #     input_ids = input_ids.to("cuda")
-    #     attention_mask = attention_mask.to("cuda")
-    #     labels = labels.to("cuda")
-    #     bbox_gt = bbox_gt.to("cuda")
-    #     bbox_mask = bbox_mask.to("cuda")
-    #     position_ids = position_ids.to("cuda")
+    # evaluate(model, dl,tokenizer,save_path="eval_result",skip_text_question=True)
+    with torch.no_grad():
+        for i, batch in enumerate(dl):
+            if i == 5:
+                break
+            (
+                images,
+                input_ids,
+                attention_mask,
+                labels,
+                bbox_gt,
+                bbox_mask,
+                position_ids,
+                answer_types,
+                questions,
+                answers,
+            ) = batch.values()
+            images = images.to("cuda")
+            print("img shape", images.shape)
+            input_ids = input_ids.to("cuda")
+            attention_mask = attention_mask.to("cuda")
+            labels = labels.to("cuda")
+            bbox_gt = bbox_gt.to("cuda")
+            bbox_mask = bbox_mask.to("cuda")
+            position_ids = position_ids.to("cuda")
+            print("forward pass")
+            # print("mask", bbox_mask)
+            # print("gt", bbox_gt)
+            outputs = model(
+                input_ids=input_ids,
+                images=images,
+                bbox_gts=bbox_gt,
+                bbox_masks=bbox_mask,
+                labels=labels,
+                attention_masks=attention_mask,
+                position_ids=position_ids,
+            )
+        # print("outputs bobx", outputs["bbox_3d_pred"])
 
-    #     if i == 0:
-    #         print("forward pass")
-    #         print("mask", bbox_mask)
-    #         print("gt", bbox_gt)
-    #         outputs = model(
-    #             input_ids=input_ids,
-    #             images=images,
-    #             # bbox_gts=bbox_gt,
-    #             # bbox_masks=bbox_mask,
-    #             labels=labels,
-    #             attention_masks=attention_mask,
-    #             position_ids=position_ids,
-    #         )
-    #         # print("outputs bobx", outputs["bbox_3d_pred"])
     #     elif i == 1:
     #         print("generation")
     #         outputs,bbox_pred = model.generate(input_ids=input_ids, images=images)

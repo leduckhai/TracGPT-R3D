@@ -23,9 +23,10 @@ from tqdm import tqdm
 
 
 def evaluate_single(bbox_pred,bbox_gt,bbox_mask):
-    print("bbox mask",bbox_mask)
+    # print("bbox mask",bbox_mask)
     if torch.any(bbox_mask):
-        print("got mask")
+        # print("got mask")
+        # print("len bbox pred",len(bbox_pred), bbox_pred[0].shape, "len bbox gt",len(bbox_gt), bbox_gt[0].shape, "len bbox mask",len(bbox_mask), bbox_mask[0].shape)
         bbox_output=compute_ious(bbox_pred, bbox_gt, bbox_mask)
         preds=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
         gt=[label.detach().cpu().numpy() for label in bbox_output["gt"]]

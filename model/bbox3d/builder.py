@@ -39,68 +39,68 @@ class BBox3DPredictor(nn.Module):
             nn.Linear(self.config.mm_hidden_size, self.config.mm_hidden_size),
             nn.Dropout(0.1),
         )
-        self.loss_calculator = self._create_loss_calculator()
+        # self.loss_calculator = self._create_loss_calculator()
         self.enabled = True
 
-    def _create_loss_calculator(self):
-        """Create loss calculation module"""
-        try:
-            from model.loss import L1Loss, IoU3DLoss
+    # def _create_loss_calculator(self):
+    #     """Create loss calculation module"""
+    #     try:
+    #         from model.loss import L1Loss, IoU3DLoss
 
-            class BBox3DLossCalculator(nn.Module):
-                def __init__(self):
-                    super().__init__()
-                    self.l1_loss = L1Loss()
-                    self.iou3d_loss = IoU3DLoss()
+    #         class BBox3DLossCalculator(nn.Module):
+    #             def __init__(self):
+    #                 super().__init__()
+    #                 self.l1_loss = L1Loss()
+    #                 self.iou3d_loss = IoU3DLoss()
 
-                def compute_loss(self, predictions, targets, masks=None):
-                    """Compute bbox3d loss with proper masking"""
-                    if masks is not None:
-                        # Apply mask to compute loss only on valid boxes
-                        valid_mask = masks.unsqueeze(-1).float()
-                        masked_pred = predictions * valid_mask
-                        masked_target = targets * valid_mask
+    #             def compute_loss(self, predictions, targets, masks=None):
+    #                 """Compute bbox3d loss with proper masking"""
+    #                 if masks is not None:
+    #                     # Apply mask to compute loss only on valid boxes
+    #                     valid_mask = masks.unsqueeze(-1).float()
+    #                     masked_pred = predictions * valid_mask
+    #                     masked_target = targets * valid_mask
 
-                        l1_loss = self.l1_loss(masked_pred, masked_target)
-                        iou_loss = self.iou3d_loss(masked_pred, masked_target)
+    #                     l1_loss = self.l1_loss(masked_pred, masked_target)
+    #                     iou_loss = self.iou3d_loss(masked_pred, masked_target)
 
-                        # Normalize by number of valid boxes
-                        num_valid = masks.sum().clamp(min=1)
-                        return (l1_loss + iou_loss) / num_valid
-                    else:
-                        return self.l1_loss(predictions, targets) + self.iou3d_loss(
-                            predictions, targets
-                        )
+    #                     # Normalize by number of valid boxes
+    #                     num_valid = masks.sum().clamp(min=1)
+    #                     return (l1_loss + iou_loss) / num_valid
+    #                 else:
+    #                     return self.l1_loss(predictions, targets) + self.iou3d_loss(
+    #                         predictions, targets
+    #                     )
 
-            return BBox3DLossCalculator()
-        except ImportError:
-            return nn.MSELoss()
+    #         return BBox3DLossCalculator()
+    #     except ImportError:
+    #         return nn.MSELoss()
 
-    def extract_bbox_features(
-        self, hidden_states: torch.Tensor, bbox_token_mask: torch.Tensor
-    ) -> torch.Tensor:
-        """Extract bbox features from hidden states"""
-        bbox_prompts = []
+    # def extract_bbox_features(
+    #     self, hidden_states: torch.Tensor, bbox_token_mask: torch.Tensor
+    # ) -> torch.Tensor:
+    #     """Extract bbox features from hidden states"""
+    #     bbox_prompts = []
 
-        for i in range(bbox_token_mask.shape[0]):
-            token_count = torch.sum(bbox_token_mask[i])
+    #     for i in range(bbox_token_mask.shape[0]):
+    #         token_count = torch.sum(bbox_token_mask[i])
 
-            if token_count == 1:
-                bbox_token = hidden_states[i][bbox_token_mask[i]]
-                bbox_prompt = self.bbox3d_projector(bbox_token)
-            elif token_count > 1:
-                bbox_tokens = hidden_states[i][bbox_token_mask[i]]
-                bbox_token = torch.mean(bbox_tokens, dim=0, keepdim=True)
-                bbox_prompt = self.bbox3d_projector(bbox_token)
-            else:
-                bbox_prompt = torch.zeros(
-                    [1, self.config.mm_hidden_size],
-                    dtype=hidden_states.dtype,
-                    device=hidden_states.device,
-                )
-            bbox_prompts.append(bbox_prompt)
+    #         if token_count == 1:
+    #             bbox_token = hidden_states[i][bbox_token_mask[i]]
+    #             bbox_prompt = self.bbox3d_projector(bbox_token)
+    #         elif token_count > 1:
+    #             bbox_tokens = hidden_states[i][bbox_token_mask[i]]
+    #             bbox_token = torch.mean(bbox_tokens, dim=0, keepdim=True)
+    #             bbox_prompt = self.bbox3d_projector(bbox_token)
+    #         else:
+    #             bbox_prompt = torch.zeros(
+    #                 [1, self.config.mm_hidden_size],
+    #                 dtype=hidden_states.dtype,
+    #                 device=hidden_states.device,
+    #             )
+    #         bbox_prompts.append(bbox_prompt)
 
-        return torch.cat(bbox_prompts, dim=0)
+    #     return torch.cat(bbox_prompts, dim=0)
 
     def predict_bboxes(
         self, vision_features: torch.Tensor, text_features: torch.Tensor
@@ -121,36 +121,41 @@ class BBox3DPredictor(nn.Module):
     def compute_bbox_loss(
         self,
         bbox_preds: torch.Tensor,
-        conf_preds: torch.Tensor,
         targets: torch.Tensor,
         masks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Compute bbox prediction loss with proper shape handling
-        bbox_preds: List of torch.Tensor, each tensor has shape [num_preds, 6]
-        conf_preds: List of torch.Tensor, each tensor has shape [num_preds]
-
-        """
-        losses = []
-        # print("bbox pred shape",len(bbox_preds), "target",targets.shape)
+        """Optimized bbox loss computation with vectorized operations"""
+        total_loss = 0.0
+        valid_batches = 0
+        
         for b in range(len(bbox_preds)):
-            bbox_pred = bbox_preds[b]  # [num_preds, 6], in center format
+            bbox_pred = bbox_preds[b]  # [num_preds, 6]
             mask = masks[b]  # [max_num_gt]
-            target = targets[b]  # [max_num_gt, 6], center format
+            target = targets[b]  # [max_num_gt, 6]
+            gt_boxes = target[mask]  # [num_valid_gt, 6]
 
-            gt_boxes_minmax = target[mask]  # [num_valid_gt, 6], center format
-
-            if len(gt_boxes_minmax) == 0:
+            if len(gt_boxes) == 0:
                 continue
+                
+            # Convert format if needed
+            pred_boxes_minmax = convert_model_to_gt_format(bbox_pred, normalize_coords=False)
+            # gt_boxes_minmax = convert_model_to_gt_format(gt_boxes, normalize_coords=False)
+            
+            # Vectorized matching and loss computation
+            matches = hungarian_iou_matching(pred_boxes_minmax, gt_boxes)
+            if matches:
+                pred_indices = [m[0] for m in matches]
+                gt_indices = [m[1] for m in matches]
+                batch_loss = F.smooth_l1_loss(
+                    bbox_pred[pred_indices],
+                    gt_boxes[gt_indices],
+                    reduction='sum'  # Preserve magnitude
+                )
+                total_loss += batch_loss
+                valid_batches += 1
 
-            bbox_pred_minmax = convert_model_to_gt_format(bbox_pred)
-            matches = hungarian_iou_matching(bbox_pred_minmax, gt_boxes_minmax)
-            for pred_idx, gt_idx, iou in matches:
-                pred_box = bbox_pred[pred_idx]  # [6], center format
-                gt_box = gt_boxes_minmax[gt_idx]  # [6], center format
-                loss = F.smooth_l1_loss(pred_box, gt_box)
-                losses.append(loss)
-
-        return torch.stack(losses).sum()
+        # Normalize by number of valid batches and matches
+        return total_loss / max(1, valid_batches)
 
     
 if __name__ == "__main__":

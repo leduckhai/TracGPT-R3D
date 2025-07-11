@@ -30,7 +30,7 @@ class TracDataset(Dataset):
         mode="train",
         n_sample=-1,
         image_shape=[32, 256, 256],
-        diverse=True
+        bbox_only=False
     ):
         self.image_shape = image_shape
 
@@ -106,10 +106,11 @@ class TracDataset(Dataset):
                         data_point["answer_type"] = "text"
                         data_point["bbox_3d"] = None
                     self.qa_banks.append(data_point)
+        if bbox_only:
+            self.qa_banks = [d for d in self.qa_banks if d["answer_type"] == "bbox_3d"]
         if n_sample != -1:
             self.qa_banks = self.qa_banks[:n_sample]
-        # if diverse:
-            # box_
+       
 
     def __len__(self):
         return len(self.qa_banks)
@@ -130,10 +131,10 @@ class TracDataset(Dataset):
         data_point["image"] = image_dict["image"]
         return data_point
 
-def load_data():
-    train_sample=10
-    val_sample=10
-    test_sample=10
+def load_data(bbox_only=False):
+    train_sample=1000
+    val_sample=100
+    test_sample=50
     train_val_dir = "/root/VLMTrac/chunks/train/data"
     image_path="/root/VLMTrac/2d_data/train/image"
     data_paths = [os.path.join(train_val_dir, record) for record in os.listdir(train_val_dir)]
@@ -143,7 +144,7 @@ def load_data():
     train_paths,val_paths = train_test_split(
         train_paths, test_size=0.2, random_state=42
     )
-    train_set=TracDataset(data_paths=train_paths, image_path=image_path, mode="train", n_sample=train_sample)
+    train_set=TracDataset(data_paths=train_paths, image_path=image_path, mode="train", n_sample=train_sample,bbox_only=bbox_only)
     val_set=TracDataset(data_paths=val_paths,image_path=image_path, mode="val", n_sample=val_sample)
     test_set=TracDataset(data_paths=test_paths,image_path=image_path, mode="test", n_sample=test_sample)
     return train_set, val_set, test_set

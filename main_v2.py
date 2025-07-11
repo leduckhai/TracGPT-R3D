@@ -62,7 +62,7 @@ def set_up_lora(model, training_args):
 
     # Find all linear layer names for LoRA
     lora_module_names = find_all_linear_names(model)
-    print_info(f"LoRA target modules: {lora_module_names}")
+    # print_info(f"LoRA target modules: {lora_module_names}")
 
     lora_config = LoraConfig(
         r=training_args.lora_r,
@@ -106,7 +106,7 @@ def create_training_args():
     args.gradient_accumulation_steps = 1
     args.evaluation_strategy = "steps"
     args.eval_accumulation_steps = 1
-    args.eval_steps = 0.04
+    args.eval_steps = 20
     args.save_strategy = "steps"
     args.save_steps = 1000
     args.save_total_limit = 1
@@ -114,7 +114,7 @@ def create_training_args():
     args.weight_decay = 0.0
     args.warmup_ratio = 0.03
     args.lr_scheduler_type = "cosine"
-    args.logging_steps = 4
+    args.logging_steps = 8
     args.gradient_checkpointing = False
     args.dataloader_pin_memory = True
     args.dataloader_num_workers = 8
@@ -359,7 +359,7 @@ def parse_arguments():
     parser.add_argument(
         "--eval_accumulation_steps", type=int, default=1, help="Eval accumulation steps"
     )
-    parser.add_argument("--eval_steps", type=float, default=0.04, help="Eval steps")
+    parser.add_argument("--eval_steps", type=float, default=4, help="Eval steps")
     parser.add_argument(
         "--save_strategy", type=str, default="steps", help="Save strategy"
     )
@@ -505,8 +505,6 @@ def main():
         set_up_lora(model, training_args)
 
     model.all_to_device(training_args.device)
-    print("eval step", training_args.eval_steps)
-    print("logging step", training_args.logging_steps)
     print("output dir", training_args.output_dir)
     trainer = TracTrainer(
         model=model,
@@ -548,6 +546,7 @@ def main():
         # preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
     # Start training
+    torch.autograd.set_detect_anomaly(True)
     trainer.train()
     print_info("Training complete!")
     print("evaluate")
