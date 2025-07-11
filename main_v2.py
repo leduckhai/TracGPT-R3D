@@ -1,15 +1,28 @@
 import os
 import logging
 import argparse
-import json
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
-from collator import  BboxAwareCollator
+from transformers import AutoTokenizer
+from collator import BboxAwareCollator
 from torch.utils.data import DataLoader
 from data.dataloader import load_data
-from transformers import Trainer, TrainingArguments
-from model.LanguageModel.Trac_llama import TracLlamaForCausalLM,TracLlamaConfig
+from transformers import TrainingArguments
+from model.LanguageModel.Trac_llama import TracLlamaForCausalLM, TracLlamaConfig
+from eval import evaluate, evaluate_single
+from trainer import TracTrainer
+import wandb
+import numpy as np
+from datetime import datetime
+
+now = datetime.now()
+
+# Format as D-M-Y--H-M-S
+date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
+wandb.init(
+    project="TracGPT",
+    name=f"Trac_llama-{date_time_string}",
+)
 # Disable distributed training detection
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
@@ -41,6 +54,7 @@ def create_data_args():
     args.refseg_data_test_path = "./Data/data/M3D_RefSeg_npy/M3D_RefSeg_test.csv"
 
     return args
+
 
 def set_up_lora(model, training_args):
     print_info("Setting up LoRA...")
@@ -82,8 +96,8 @@ def create_training_args():
     args.seed = 42
     args.optim = "adamw_torch"
 
-    args.bf16 = False  
-    args.fp16 = True 
+    args.bf16 = False
+    args.fp16 = True
     args.output_dir = "./output/Tinyllama-finetune-0000/"
     args.num_train_epochs = 3
     args.per_device_train_batch_size = 8
@@ -361,9 +375,7 @@ def parse_arguments():
     parser.add_argument(
         "--lr_scheduler_type", type=str, default="cosine", help="LR scheduler type"
     )
-    parser.add_argument(
-        "--logging_steps", type=float, default=4, help="Logging steps"
-    )
+    parser.add_argument("--logging_steps", type=float, default=4, help="Logging steps")
     parser.add_argument(
         "--gradient_checkpointing",
         type=lambda x: x.lower() == "true",
@@ -385,11 +397,27 @@ def parse_arguments():
         help="Number of dataloader workers",
     )
     parser.add_argument(
-        "--report_to", type=str, default="tensorboard", help="Reporting platform"
+        "--report_to", type=str, default="wandb", help="Reporting platform"
     )
-    
 
     return parser.parse_args()
+
+
+def compute_metrics(eval_pred):
+    preds = eval_pred.predictions  # shape: [B, D, H, W]
+    labels = eval_pred.label_ids  # shape: [B, D, H, W]
+    bbox_preds = preds["bbox_preds"]  # shape: [B, D, H, W]
+    bbox_labels = labels["bbox_labels"]  # shape: [B, D, H, W]
+    bbox_preds = preds["mask_labels"]  # shape: [B, D, H, W]
+    # dice = dice_score(preds, labels)
+    ious = []
+    for pred, label in zip(bbox_preds, bbox_labels):
+        # iou = compute_ious(pred, label)
+        pred, gt, iou = evaluate_single(pred, label)
+        if len(iou) > 0:
+            print("sample iou compute metric", iou)
+            ious.extend(iou)
+    return {"iou": np.mean(ious)}
 
 
 def main():
@@ -401,31 +429,6 @@ def main():
     print("data_args:", data_args)
     print("training_args:", training_args)
 
-    # Override with command line arguments
-    # from collections import OrderedDict,defaultdict
-    # ptr_map = defaultdict(list)
-    # # Recursively check all nested modules
-    # def _check_module(module, prefix=""):
-    #     for name, param in module.named_parameters(recurse=False):
-    #         ptr = param.data_ptr()
-    #         ptr_map[ptr].append(f"{prefix}{name}")
-        
-    #     for name, child in module.named_children():
-    #         _check_module(child, prefix=f"{prefix}{name}.")
-
-    # _check_module(model)
-    
-    # # Filter to show only shared parameters
-    # shared = {ptr: names for ptr, names in ptr_map.items() if len(names) > 1}
-    # if shared:
-    #     print("⚠️ SHARED PARAMETERS IN NESTED MODEL:")
-    #     for ptr, names in shared.items():
-    #         print(f"Memory {ptr}:")
-    #         for n in names:
-    #             print(f"  → {n}")
-    # else:
-    #     print("No shared parameters found in nested structure.")
-    # Set random seed
     torch.manual_seed(training_args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(training_args.seed)
@@ -444,7 +447,6 @@ def main():
     print_info(f"Dataloader Workers: {training_args.dataloader_num_workers}")
 
     print_info("=" * 20 + " Tokenizer preparation " + "=" * 20)
-    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         cmd_args.model_name_or_path,
         # padding_side="right",
@@ -473,32 +475,15 @@ def main():
     print("val set", len(val_set))
     print("test set", len(test_set))
 
-    # train_dataloader = DataLoader(
-    #     train_set,
-    #     batch_size=training_args.per_device_train_batch_size,
-    #     collate_fn=collator,
-    #     pin_memory=cmd_args.dataloader_pin_memory,
-    #     num_workers=cmd_args.dataloader_num_workers,
-    # )
-    # val_dataloader = DataLoader(
-    #     val_set,
-    #     batch_size=training_args.per_device_eval_batch_size,
-    #     collate_fn=collator,
-    #     pin_memory=cmd_args.dataloader_pin_memory,
-    #     num_workers=cmd_args.dataloader_num_workers,
-    # )
-    # test_dataloader = DataLoader(
-    #     test_set,
-    #     batch_size=training_args.per_device_test_batch_size,
-    #     collate_fn=collator,
-    #     pin_memory=cmd_args.dataloader_pin_memory,
-    # )
-
-    img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
-    config = TracLlamaConfig(
-        vocab_size=len(tokenizer), img_token_id=img_token_id
+    test_loader = DataLoader(
+        test_set,
+        batch_size=training_args.per_device_test_batch_size,
+        collate_fn=collator,
+        pin_memory=cmd_args.dataloader_pin_memory,
     )
 
+    img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
+    config = TracLlamaConfig(vocab_size=len(tokenizer), img_token_id=img_token_id)
 
     if cmd_args.model_name_or_path == "TinyLlama/TinyLlama-1.1B-Chat-v1.0":
 
@@ -507,7 +492,7 @@ def main():
         raise NotImplementedError
 
     model.get_model().initialize_multimodal_components()
-    
+
     if cmd_args.freeze_backbone:
         print_info("Freezing backbone...")
         model.model.requires_grad_(False)
@@ -517,13 +502,13 @@ def main():
 
     # LoRA setup
     if training_args.lora_enable:
-       set_up_lora(model, training_args)
+        set_up_lora(model, training_args)
 
     model.all_to_device(training_args.device)
     print("eval step", training_args.eval_steps)
     print("logging step", training_args.logging_steps)
     print("output dir", training_args.output_dir)
-    trainer = Trainer(
+    trainer = TracTrainer(
         model=model,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
@@ -532,7 +517,9 @@ def main():
             num_train_epochs=training_args.num_train_epochs,
             logging_dir=os.path.join(training_args.output_dir, "logs"),
             eval_strategy=training_args.evaluation_strategy,  # Changed from evaluation_strategy
-            eval_steps=int(training_args.eval_steps) if training_args.eval_steps else None,
+            eval_steps=(
+                int(training_args.eval_steps) if training_args.eval_steps else None
+            ),
             logging_steps=int(training_args.logging_steps),
             save_strategy=training_args.save_strategy,
             save_steps=training_args.save_steps,
@@ -547,11 +534,11 @@ def main():
             dataloader_num_workers=training_args.dataloader_num_workers,  # Added dataloader_num_workers
             save_total_limit=training_args.save_total_limit,  # Added save_total_limit
             load_best_model_at_end=training_args.load_best_model_at_end,
-            report_to=["tensorboard"],
+            report_to=["wandb"],
             remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
             seed=training_args.seed,  # Added seed
             save_safetensors=False,
-             dataloader_pin_memory=False,  
+            dataloader_pin_memory=False,
         ),
         train_dataset=train_set,
         eval_dataset=val_set,
@@ -563,7 +550,17 @@ def main():
     # Start training
     trainer.train()
     print_info("Training complete!")
+    print("evaluate")
+    metrics = trainer.evaluate()
+    print(f"Loss: {metrics['eval_loss']}")
+    print(f"IoU: {metrics['eval_iou']}")
 
+    evaluate(
+        model=model,
+        data_loader=test_loader,
+        tokenizer=tokenizer,
+        save_path="generate_output",
+    )
     # Save the final model
     safe_save_model_for_hf_trainer(trainer, training_args.output_dir)
     print_info(f"Model saved to {training_args.output_dir}")

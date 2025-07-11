@@ -363,10 +363,6 @@ if __name__ == "__main__":
 
     special_tokens = [
         "<im_patch>",
-        # "<bx_start>",
-        # "<bx_end>",
-        # "<image>",
-        # "<image_newline>",
         "<end>",
     ]
 
@@ -383,7 +379,6 @@ if __name__ == "__main__":
         token_name=image_token_name,
     )
 
-    # ds = QA3DDataset()
     train_set, val_set, test_set = load_data()
     dl = DataLoader(train_set, batch_size=2, shuffle=True, collate_fn=collator)
     img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
@@ -398,43 +393,44 @@ if __name__ == "__main__":
 
     model.get_model().initialize_multimodal_components()
     model.all_to_device("cuda")
-    # evaluate(model, dl,tokenizer,save_path="eval_result")
-    for i, batch in enumerate(dl):
-        (
-            images,
-            input_ids,
-            attention_mask,
-            labels,
-            bbox_gt,
-            bbox_mask,
-            position_ids,
-            answer_types,
-            questions,
-            answers,
-        ) = batch.values()
-        images = images.to("cuda")
-        print("img shape", images.shape)
-        input_ids = input_ids.to("cuda")
-        attention_mask = attention_mask.to("cuda")
-        labels = labels.to("cuda")
-        bbox_gt = bbox_gt.to("cuda")
-        bbox_mask = bbox_mask.to("cuda")
-        position_ids = position_ids.to("cuda")
+    evaluate(model, dl,tokenizer,save_path="eval_result",skip_text_question=True)
+    # for i, batch in enumerate(dl):
+    #     (
+    #         images,
+    #         input_ids,
+    #         attention_mask,
+    #         labels,
+    #         bbox_gt,
+    #         bbox_mask,
+    #         position_ids,
+    #         answer_types,
+    #         questions,
+    #         answers,
+    #     ) = batch.values()
+     
+    #     images = images.to("cuda")
+    #     print("img shape", images.shape)
+    #     input_ids = input_ids.to("cuda")
+    #     attention_mask = attention_mask.to("cuda")
+    #     labels = labels.to("cuda")
+    #     bbox_gt = bbox_gt.to("cuda")
+    #     bbox_mask = bbox_mask.to("cuda")
+    #     position_ids = position_ids.to("cuda")
 
-        if i == 0:
-            print("forward pass")
-            print("mask", bbox_mask)
-            print("gt", bbox_gt)
-            outputs = model(
-                input_ids=input_ids,
-                images=images,
-                # bbox_gts=bbox_gt,
-                # bbox_masks=bbox_mask,
-                labels=labels,
-                attention_masks=attention_mask,
-                position_ids=position_ids,
-            )
-            # print("outputs bobx", outputs["bbox_3d_pred"])
+    #     if i == 0:
+    #         print("forward pass")
+    #         print("mask", bbox_mask)
+    #         print("gt", bbox_gt)
+    #         outputs = model(
+    #             input_ids=input_ids,
+    #             images=images,
+    #             # bbox_gts=bbox_gt,
+    #             # bbox_masks=bbox_mask,
+    #             labels=labels,
+    #             attention_masks=attention_mask,
+    #             position_ids=position_ids,
+    #         )
+    #         # print("outputs bobx", outputs["bbox_3d_pred"])
     #     elif i == 1:
     #         print("generation")
     #         outputs,bbox_pred = model.generate(input_ids=input_ids, images=images)

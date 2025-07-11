@@ -5,86 +5,6 @@ from typing import List
 import numpy as np
 import torch.nn.functional as F
 
-class QA3DDataset(Dataset):
-    def __init__(self, data=None):
-        image_tensor = torch.randn(1,32, 256, 256)  
-        sample = {
-            'image': image_tensor,
-            'questions': [
-                {
-                    'question': "What color is the car?",
-                    'answer': "Red",
-                    'answer_type': 'text',
-                    'bbox_3d': None
-                },
-                {
-                    'question': "What are the 3D coordinates of the car?",
-                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]", 
-                    'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.2, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                },
-                 {
-                    'question': "What color is the car?",
-                    'answer': "Red",
-                    'answer_type': 'text',
-                    'bbox_3d': None
-                },
-                {
-                    'question': "What are the 3D coordinates of the car?",
-                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]", 
-                    'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.1, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                },
-                 {
-                    'question': "What color is the bike?",
-                    'answer': "Red",
-                    'answer_type': 'text',
-                    'bbox_3d': None
-                },
-                {
-                    'question': "What are the 3D coordinates of the bike?",
-                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]", 
-                    'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                },
-                 {
-                    'question': "What color is the board?",
-                    'answer': "Red",
-                    'answer_type': 'text',
-                    'bbox_3d': None
-                },
-                {
-                    'question': "What are the 3D coordinates of the baord?",
-                    'answer': "[[0.3, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]", 
-                    'answer_type': 'bbox_3d',
-                    'bbox_3d':[[0.5, 0.4, 0.8, 0.1, 0.6, 0.2],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3],[0.4, 0.02, 0.1, 0.1, 0.1, 0.3]]
-                }
-
-              
-            ]
-        }
-
-        flattened_data = []
-        for q in sample['questions']:
-            flattened_data.append({
-                'image': sample['image'],
-                'question': q['question'],
-                'answer': q['answer'],
-                'answer_type': q['answer_type'],
-                'bbox_2d': q.get('bbox_2d'),
-                'bbox_3d': q.get('bbox_3d')
-            })
-
-        self.samples = flattened_data
-        print("length of samples:", len(self.samples))
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        item = self.samples[idx]
-        return item 
-
 class BboxAwareCollator:
     def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>"):
         self.tokenizer = tokenizer
@@ -152,7 +72,6 @@ class BboxAwareCollator:
                 bbox_gt=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
                 bbox_mask=self.create_bbox_attention_mask(0, self.max_bbox_length)
             
-            answer_types.append(sample['answer_type'])
             questions.append(sample['question'])
             answers.append(formatted_answer)
             question_text = f"Question: {sample['question']} Answer:"

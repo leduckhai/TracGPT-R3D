@@ -30,6 +30,7 @@ class TracDataset(Dataset):
         mode="train",
         n_sample=-1,
         image_shape=[32, 256, 256],
+        diverse=True
     ):
         self.image_shape = image_shape
 
@@ -107,6 +108,8 @@ class TracDataset(Dataset):
                     self.qa_banks.append(data_point)
         if n_sample != -1:
             self.qa_banks = self.qa_banks[:n_sample]
+        # if diverse:
+            # box_
 
     def __len__(self):
         return len(self.qa_banks)
@@ -128,8 +131,8 @@ class TracDataset(Dataset):
         return data_point
 
 def load_data():
-    train_sample=1000
-    val_sample=100
+    train_sample=10
+    val_sample=10
     test_sample=10
     train_val_dir = "/root/VLMTrac/chunks/train/data"
     image_path="/root/VLMTrac/2d_data/train/image"

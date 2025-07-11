@@ -15,3 +15,5 @@ VLMTrac
 output
 
 TracData
+eval_result
+wandb

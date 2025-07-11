@@ -146,45 +146,7 @@ class BBox3DHead(nn.Module):
 
         return model_boxes
 
-    def convert_model_to_gt_format(self, model_boxes):
-        """
-        Convert model predictions from [center_x, center_y, center_z, width, height, length]
-        to ground truth format [x_min, y_min, z_min, x_max, y_max, z_max]
-
-        Args:
-            model_boxes: [..., 6] - boxes in center+size format
-        Returns:
-            gt_boxes: [..., 6] - boxes in min/max format
-        """
-        # Denormalize if needed
-        if self.normalize_coords:
-            model_boxes = self.denormalize_boxes(model_boxes)
-
-        # Extract center and dimensions
-        center_x, center_y, center_z = (
-            model_boxes[..., 0],
-            model_boxes[..., 1],
-            model_boxes[..., 2],
-        )
-        width, height, length = (
-            model_boxes[..., 3],
-            model_boxes[..., 4],
-            model_boxes[..., 5],
-        )
-
-        # Convert to min/max coordinates
-        x_min = center_x - width / 2
-        y_min = center_y - height / 2
-        z_min = center_z - length / 2
-
-        x_max = center_x + width / 2
-        y_max = center_y + height / 2
-        z_max = center_z + length / 2
-
-        # Stack into GT format
-        gt_boxes = torch.stack([x_min, y_min, z_min, x_max, y_max, z_max], dim=-1)
-
-        return gt_boxes
+  
 
 
     def normalize_boxes(self, boxes):
@@ -533,23 +495,7 @@ class BBox3DHead(nn.Module):
 
         return corners
 
-def box3d_iou_single( box1, box2,denormalize=None):
-    if denormalize:
-        box1 = denormalize(box1)
-        box2 = denormalize (box2)
-        print("box1",box1,"box2",box2)
-    inter_min = torch.max(box1[:3], box2[:3])
-    inter_max = torch.min(box1[3:], box2[3:])
-    inter_dim = (inter_max - inter_min).clamp(min=0)
-    inter_vol = inter_dim.prod()
 
-    # Volumes
-    vol1 = (box1[3:] - box1[:3]).prod()
-    vol2 = (box2[3:] - box2[:3]).prod()
-
-    union_vol = vol1 + vol2 - inter_vol + 1e-8
-    iou = inter_vol / union_vol
-    return iou
 # Example usage with GT format conversion and normalization
 if __name__ == "__main__":
     print("=== BBox Format Conversion and Normalization ===")

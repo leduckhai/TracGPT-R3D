@@ -7,34 +7,39 @@ from datasets import load_dataset
 # A2_vals=train_ds.iloc[ "Patient ID"]
 from bert_score import score
 from uuid import uuid4
-from collections import defaultdict
 import os
 import pandas as pd
 import numpy as np
 import torch
 import yaml
 from utils.type import dict_to_namespace
-# from model.bbox3d.bbox_head import BBox3DHead
-from model.bbox3d.builder import BBox3DPredictor
+# from model.bbox3d.builder import BBox3DPredictor
 from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
 from datetime import datetime
-
+from model.bbox3d.helper import compute_ious
 now = datetime.now()
 date_time_str = now.strftime("%Y-%m-%d++%H:%M:%S")
+from tqdm import tqdm
 
-config_path="config/llama.yaml"
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
-config=dict_to_namespace(config)
 
-predictor=BBox3DPredictor(config.tiny_llama.bbox_predictor)
+def evaluate_single(bbox_pred,bbox_gt,bbox_mask):
+    print("bbox mask",bbox_mask)
+    if torch.any(bbox_mask):
+        print("got mask")
+        bbox_output=compute_ious(bbox_pred, bbox_gt, bbox_mask)
+        preds=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
+        gt=[label.detach().cpu().numpy() for label in bbox_output["gt"]]
+        iou=[iou.detach().cpu().numpy() for iou in bbox_output["iou"]]
+        return preds,gt,iou
+    return [],[],[]
 
-def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True):
+def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True,skip_text_question=False):
     id=date_time_str 
     bert_metrics_detail=[]
     metrics_all={}
     save_bbox_data=[]
     save_dir=os.path.join(save_path,id)
+    print("save dir evaluate",save_dir)
     os.makedirs(save_dir,exist_ok=True)
     metrics_all_path=os.path.join(save_path,id, "metrics_all.json")
     metrics_detail_path=os.path.join(save_path,id, "metrics_detail.json")
@@ -44,7 +49,7 @@ def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True):
     recalls=[]
     f1_scores=[]
     iou_scores=[]
-    for i, batch in enumerate(data_loader):
+    for i, batch in enumerate(tqdm(data_loader, desc="Processing Batches")):
         (
             images,
             input_ids,
@@ -64,25 +69,25 @@ def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True):
         bbox_gt = bbox_gt.to("cuda")
         bbox_mask = bbox_mask.to("cuda")
         position_ids = position_ids.to("cuda")
+        if skip_text_question and "bbox_3d" not in answer_types:
+            print("skip text question")
+            continue
+            # outputs = model.generate(input_ids=input_ids, images=images)
         with torch.no_grad():
             outputs,bbox_preds = model.generate(input_ids=input_ids, images=images)
         generated_text = tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)
-        print("bbox_preds",bbox_preds["bbox_pred"])
         bbox_preds=bbox_preds["bbox_pred"]
         for i, text in enumerate(generated_text):
             if answer_types[i] in ["bbox_2d", "bbox_3d"]:
-                bbox_output=predictor.compute_ious(bbox_preds[i], bbox_gt[i], bbox_mask[i])
-                if bbox_output is None:
-                    continue
-                bbox_output["pred"]=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
-                bbox_output["gt"]=[gt.detach().cpu().numpy() for gt in bbox_output["gt"]]
-                bbox_output["iou"]=[iou.detach().cpu().numpy() for iou in bbox_output["iou"]]
-                for iou in bbox_output["iou"]:
-                    iou_scores.append(iou)
-                save_bbox_data.append(bbox_output)
-                print("bbox output sample",bbox_output)
-                save_bbox_data.append(bbox_output)
-            # print("type text",answers[i], "text is",text, type(text))
+
+                pred,gt,iou=evaluate_single(bbox_preds[i],bbox_gt[i],bbox_mask[i])
+                if len(pred):
+                    iou_scores.extend(iou)
+                    print("mean iou sample",np.mean(iou))
+                    bbox_output={"pred":pred,"gt":gt,"iou":iou}
+                    save_bbox_data.append(bbox_output)
+                    # print("bbox output sample",bbox_output)
+                    save_bbox_data.append(bbox_output)
             P, R, F1 = score([answers[i]],  [text], lang="en", model_type="bert-base-uncased")
 
             print(f"Precision: {P.mean().item():.4f}")
