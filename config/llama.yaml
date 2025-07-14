@@ -5,7 +5,9 @@ tiny_llama:
       img_size: [32, 256, 256]
       patch_size: [4, 16, 16]
       in_channels: 1
-      hidden_size: 2560
+      # hidden_size: 2560
+      # hidden_size: 512
+      hidden_size: 256
       num_heads: 8
       vision_select_layer: -1
       vision_select_feature: cls_patch
@@ -13,20 +15,28 @@ tiny_llama:
     projector:
       image_size: [32, 256, 256]
       patch_size: [4, 16, 16]
-      in_dim: 2560
-      out_dim: 2048
+      # in_dim: 2560
+      out_channels: 256
+      in_channels: 2048
+      in_embed: 256
+      out_embed: 2048
+      # out_dim: 2048
+      # hidden_dim: 1024
+      # out_dim: 256
       layer_type: mlp
-      layer_num: 2
+      layer_num: 4
       pooling_type: spatial
       pooling_size: 2
-      mm_projector_type: spp
+      # mm_projector_type: linear
+      mm_projector_type: minigpt
   
   bbox_predictor:
     bbox_head:
-      input_dim: 4096
+      input_dim: 2048
       hidden_dim: 512
       num_classes: 1
-      max_bbox_len: 9
+      # max_bbox_len: 9
+      max_bbox_len: 1
       normalize_coords: True
       coord_bounds: 
         x_min: 0

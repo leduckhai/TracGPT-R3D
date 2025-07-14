@@ -25,22 +25,28 @@ class IdentityMap(nn.Module):
 
 
 class Minigpt(nn.Module):
-    def __init__(self, config=None):
+    def __init__(self, config):
+        
         super(Minigpt, self).__init__()
         # c*4 is the input size, and c is the output size for the linear layer
-        inc, ouc = config.mm_hidden_size, config.hidden_size
-        self.linear = nn.Linear(inc * 4, ouc)
-
+        in_channels,out_channels,in_embed,out_embed = config.in_channels, config.out_channels, config.in_embed, config.out_embed
+        # inc, ouc = in_dim, out_dim
+        # self.linear = nn.Linear(inc * 4, ouc)
+        if in_channels % out_channels != 0:
+            raise ValueError(f"in_channels {in_channels} must be divisible by out_channels {out_channels}")
+        self.factor = in_channels // out_channels
+        # self.factor=in_channels/
+        self.linear = nn.Linear(in_embed * self.factor, out_embed)
     def forward(self, x):
         # x is the input tensor with shape [b, num_tokens, c]
         b, num_tokens, c = x.shape
 
         # Check if num_tokens is divisible by 4
-        if num_tokens % 4 != 0:
-            raise ValueError("num_tokens must be divisible by 4")
+        # if num_tokens % 4 != 0:
+        #     raise ValueError("num_tokens must be divisible by 4")
 
         # Reshape x to [b, num_tokens/4, c*4]
-        x = x.view(b, num_tokens // 4, c * 4)
+        x = x.view(b, num_tokens // self.factor, c * self.factor)
 
         # Apply the linear transformation
         x = self.linear(x)
@@ -78,11 +84,25 @@ class Vanilla(nn.Module):
 
 
 class FullLinear(nn.Module):
-    def __init__(self, config):
+    def __init__(self, in_dim,hidden_dim, out_dim):
         super(FullLinear, self).__init__()
-        self.linear = nn.Linear(config.mm_hidden_size, config.hidden_size)
+        self.projector=nn.Sequential(
+               nn.Linear(in_dim, out_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(out_dim,out_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            )
+        self._init_weights()
+    def _init_weights(self):
+        for layer in self.projector.modules():
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.constant_(layer.bias, 0.1)  # Small positive bias
+                print(f"Initialized {layer} with Xavier weights and bias=0.1")
     def forward(self, x):
-        x = self.linear(x)
+        x = self.projector(x)
         return x
     @property
     def proj_out_num(self):
@@ -94,7 +114,7 @@ def build_mm_projector(config):
     
    
     if config.mm_projector_type == 'linear':
-        return FullLinear(config)
+        return FullLinear( in_dim=config.in_dim,hidden_dim=config.hidden_dim,out_dim=config.out_dim)
     elif config.mm_projector_type    == 'spp':
         return SpatialPoolingProjector(image_size=config.image_size,
                                         patch_size=config.patch_size,
@@ -105,7 +125,8 @@ def build_mm_projector(config):
                                         pooling_type=config.pooling_type,
                                         pooling_size=config.pooling_size)
 
-
+    elif config.mm_projector_type == 'minigpt':
+        return Minigpt(config)
     elif config.mm_projector_type == 'identity':
         return IdentityMap()
     else:

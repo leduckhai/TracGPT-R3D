@@ -71,7 +71,8 @@ class MultimodalProcessor(nn.Module):
         embed_tokens_fn: callable,
     ) -> Tuple:
         """Handle multimodal inputs with vision and text fusion"""
-        image_features = self.vision_encoder.encode_images(images)
+        image_features =  torch.as_tensor(self.vision_encoder.encode_images(images))
+        # image_features=image_features.to(input_ids.device)
         new_labels = []
         new_inputs_embeds = []
 

@@ -48,31 +48,23 @@ class BBox3DHead(nn.Module):
 
         self.conf_head = nn.Linear(self.hidden_dim, self.max_bbox_len)
 
-        # self._initialize_weights()
+        self._init_weights()
 
-    def _initialize_weights(self):
-        """Initialize weights"""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+    def _init_weights(self):
+        for layer in self.feature_extractor.modules():
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.constant_(layer.bias, 0.1)  # Small positive bias
+                print(f"Initialized {layer} with Xavier weights and bias=0.1")
 
-    def forward(self, x, dynamic_output=True, conf_threshold=0.5, apply_constraints=True):
+        if isinstance(layer, nn.Conv2d):
+            nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+            nn.init.constant_(layer.bias, 0.1)
+
+    def forward(self, x,  apply_constraints=True):
         features = self.feature_extractor(x)
         bbox_pred = self.bbox_head(features).view(-1, self.max_bbox_len, 6)  # [B, N, 6]
-    
-        if apply_constraints:
-            # Create new tensors for constrained values (non-inplace)
-            constrained_dims = torch.relu(bbox_pred[..., 3:])  # w, h, l > 0
-            constrained_centers = torch.clamp(bbox_pred[..., :3], 0.0, 1.0)
-            
-            # Combine using torch.cat (non-inplace)
-            bbox_pred = torch.cat([
-                constrained_centers,  # [B, N, 3]
-                constrained_dims      # [B, N, 3]
-            ], dim=-1)
-        
+        bbox_pred=torch.sigmoid(bbox_pred) 
         return bbox_pred
     def convert_gt_to_model_format(self, gt_boxes):
         """
@@ -84,11 +76,9 @@ class BBox3DHead(nn.Module):
         Returns:
             model_boxes: [..., 6] - boxes in center+size format
         """
-        # Extract min/max coordinates
         x_min, y_min, z_min = gt_boxes[..., 0], gt_boxes[..., 1], gt_boxes[..., 2]
         x_max, y_max, z_max = gt_boxes[..., 3], gt_boxes[..., 4], gt_boxes[..., 5]
 
-        # Convert to center + dimensions
         center_x = (x_min + x_max) / 2
         center_y = (y_min + y_max) / 2
         center_z = (z_min + z_max) / 2
@@ -97,83 +87,14 @@ class BBox3DHead(nn.Module):
         height = y_max - y_min
         length = z_max - z_min
 
-        # Stack into model format
         model_boxes = torch.stack(
             [center_x, center_y, center_z, width, height, length], dim=-1
         )
 
-        # Normalize if enabled
-        if self.normalize_coords:
-            model_boxes = self.normalize_boxes(model_boxes)
 
         return model_boxes
 
-  
-
-
-    def normalize_boxes(self, boxes):
-        """
-        Normalize boxes to [0, 1] range
-        Args:
-            boxes: [..., 6] - [center_x, center_y, center_z, width, height, length]
-        Returns:
-            normalized_boxes: [..., 6] - normalized to [0, 1]
-        """
-        normalized = boxes.clone()
-
-        # Normalize centers to [0, 1]
-        x_range = self.coord_bounds["x_max"] - self.coord_bounds["x_min"]
-        y_range = self.coord_bounds["y_max"] - self.coord_bounds["y_min"]
-        z_range = self.coord_bounds["z_max"] - self.coord_bounds["z_min"]
-
-        normalized[..., 0] = (
-            boxes[..., 0] - self.coord_bounds["x_min"]
-        ) / x_range  # center_x
-        normalized[..., 1] = (
-            boxes[..., 1] - self.coord_bounds["y_min"]
-        ) / y_range  # center_y
-        normalized[..., 2] = (
-            boxes[..., 2] - self.coord_bounds["z_min"]
-        ) / z_range  # center_z
-
-        # Normalize dimensions by the respective ranges
-        normalized[..., 3] = boxes[..., 3] / x_range  # width
-        normalized[..., 4] = boxes[..., 4] / y_range  # height
-        normalized[..., 5] = boxes[..., 5] / z_range  # length
-
-        return normalized
-
-    def denormalize_boxes(self, normalized_boxes):
-        """
-        Denormalize boxes from [0, 1] range to original coordinates
-        Args:
-            normalized_boxes: [..., 6] - normalized boxes
-        Returns:
-            boxes: [..., 6] - denormalized boxes
-        """
-        denormalized = normalized_boxes.clone()
-
-        # Denormalize centers
-        x_range = self.coord_bounds["x_max"] - self.coord_bounds["x_min"]
-        y_range = self.coord_bounds["y_max"] - self.coord_bounds["y_min"]
-        z_range = self.coord_bounds["z_max"] - self.coord_bounds["z_min"]
-
-        denormalized[..., 0] = (
-            normalized_boxes[..., 0] * x_range + self.coord_bounds["x_min"]
-        )  # center_x
-        denormalized[..., 1] = (
-            normalized_boxes[..., 1] * y_range + self.coord_bounds["y_min"]
-        )  # center_y
-        denormalized[..., 2] = (
-            normalized_boxes[..., 2] * z_range + self.coord_bounds["z_min"]
-        )  # center_z
-
-        # Denormalize dimensions
-        denormalized[..., 3] = normalized_boxes[..., 3] * x_range  # width
-        denormalized[..., 4] = normalized_boxes[..., 4] * y_range  # height
-        denormalized[..., 5] = normalized_boxes[..., 5] * z_range  # length
-
-        return denormalized
+    
      
     def _apply_dynamic_filtering(self, outputs, conf_threshold=0.5):
         """
@@ -463,25 +384,3 @@ if __name__ == "__main__":
     print("=== BBox Format Conversion and Normalization ===")
 
     # Initialize model with normalization enabled
-    coord_bounds = {
-        "x_min": -10.0,
-        "x_max": 10.0,
-        "y_min": -10.0,
-        "y_max": 10.0,
-        "z_min": -5.0,
-        "z_max": 5.0,
-    }
-
-    model = BBox3DHead(
-        input_dim=6144,
-        hidden_dim=512,
-        num_classes=10,
-        max_bbox_len=9,
-        normalize_coords=True,
-        coord_bounds=coord_bounds,
-    )
-    inp=torch.rand(2,6144)
-    output=model(inp)
-    print("output",output)
-
-    

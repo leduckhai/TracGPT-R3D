@@ -1,10 +1,4 @@
 from datasets import load_dataset
-
-# Login using e.g. `huggingface-cli login` to access this dataset
-# ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v3")
-# train_ds=ds["train"]
-
-# A2_vals=train_ds.iloc[ "Patient ID"]
 from bert_score import score
 from uuid import uuid4
 import os
@@ -16,7 +10,7 @@ from utils.type import dict_to_namespace
 # from model.bbox3d.builder import BBox3DPredictor
 from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
 from datetime import datetime
-from model.bbox3d.helper import compute_ious
+from model.bbox3d.helper import compute_ious,convert_model_to_gt_format,denormalize_boxes
 now = datetime.now()
 date_time_str = now.strftime("%Y-%m-%d++%H:%M:%S")
 from tqdm import tqdm
@@ -25,9 +19,14 @@ from tqdm import tqdm
 def evaluate_single(bbox_pred,bbox_gt,bbox_mask):
     # print("bbox mask",bbox_mask)
     if torch.any(bbox_mask):
-        # print("got mask")
-        # print("len bbox pred",len(bbox_pred), bbox_pred[0].shape, "len bbox gt",len(bbox_gt), bbox_gt[0].shape, "len bbox mask",len(bbox_mask), bbox_mask[0].shape)
-        bbox_output=compute_ious(bbox_pred, bbox_gt, bbox_mask)
+        bbox_pred=convert_model_to_gt_format(bbox_pred)
+        print("bbox pred",bbox_pred)
+        bbox_pred_unormalized=denormalize_boxes(bbox_pred)
+        print("bbox pred unormalize",bbox_pred_unormalized)
+        bbox_gt_unormalized=denormalize_boxes(bbox_gt)
+        print("bbox gt unnormalze",bbox_gt_unormalized)
+        
+        bbox_output=compute_ious(bbox_pred_unormalized, bbox_gt_unormalized, bbox_mask)
         preds=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
         gt=[label.detach().cpu().numpy() for label in bbox_output["gt"]]
         iou=[iou.detach().cpu().numpy() for iou in bbox_output["iou"]]

@@ -98,12 +98,14 @@ class BboxAwareCollator:
         
         position_ids = torch.arange(0, self.max_length).expand(len(batch), -1).long()
         
+        bbox_gts = torch.stack(bbox_gts)
+        bbox_gts = torch.clamp(bbox_gts, min=1e-3, max=1.0)  
         return {
             'images': torch.stack(images),
             'input_ids': torch.stack(input_ids),
             'attention_masks': torch.stack(attention_masks),
             'labels': torch.stack(labels),
-            'bbox_gts': torch.stack( bbox_gts),
+            'bbox_gts': bbox_gts,
             'bbox_masks': torch.stack( bbox_masks),
             'position_ids': position_ids  ,
             'answer_types': answer_types,
@@ -153,11 +155,8 @@ class BboxPostProcessor:
 if __name__ == "__main__":
     from transformers import AutoTokenizer
     from torch.utils.data import DataLoader
-    ds= QA3DDataset()
-    print("Dataset length:", len(ds))
     tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
     img_token_name="<im_patch>"
-    dl= torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=BboxAwareCollator(tokenizer=tokenizer,token_name=img_token_name))
     tokenizer.add_tokens(img_token_name)
     img_id= tokenizer.convert_tokens_to_ids(img_token_name)
     print("img id",img_id)

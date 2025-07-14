@@ -41,14 +41,14 @@ class TracDataset(Dataset):
                 EnsureChannelFirstD(keys=["image"],channel_dim="no_channel"),
     
     # Scale intensity
-    ScaleIntensityRanged(
-        keys=["image"],
-        a_min=0,
-        a_max=255,
-        b_min=0.0,
-        b_max=1.0,
-        clip=True,
-    ),
+    # ScaleIntensityRanged(
+    #     keys=["image"],
+    #     a_min=0,
+    #     a_max=255,
+    #     b_min=0.0,
+    #     b_max=1.0,
+    #     clip=True,
+    # ),
 
     ResizeD(
         keys=["image"],
@@ -151,6 +151,19 @@ def load_data(bbox_only=False):
 if __name__ == "__main__":
     import os
     
+    """"
+    text = (32)
+    tokenizer= (32)
+    text_input_embed=(32,2048)
+    
+    image_embedding=(48, 768)
+    projector=(32, 758)=> (32, 2048)
+    
+    (32,2048+768)
+    
+    concat text_input_embed and image_embedding => (32+48, 2048)
+    
+    """
 
     # tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
     # train_val_dir = "/home/ubuntu/repo/TracGPT-R3D/VLMTrac/50_chunk_data/train"

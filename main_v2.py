@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 from collator import BboxAwareCollator
 from torch.utils.data import DataLoader
+from transformers import TrainerCallback
 from data.dataloader import load_data
 from transformers import TrainingArguments
 from model.LanguageModel.Trac_llama import TracLlamaForCausalLM, TracLlamaConfig
@@ -59,25 +60,28 @@ def create_data_args():
 def set_up_lora(model, training_args):
     print_info("Setting up LoRA...")
     from peft import LoraConfig, get_peft_model, TaskType
-
-    # Find all linear layer names for LoRA
     lora_module_names = find_all_linear_names(model)
-    # print_info(f"LoRA target modules: {lora_module_names}")
+    # print(f"LoRA target modules: {lora_module_names}")
 
+    # Configure LoRA
     lora_config = LoraConfig(
-        r=training_args.lora_r,
-        lora_alpha=training_args.lora_alpha,
+        r=16,
+        lora_alpha=32,
         target_modules=lora_module_names,
-        lora_dropout=training_args.lora_dropout,
-        bias=training_args.lora_bias,
+        lora_dropout=0.05,
+        bias="lora_only",
         task_type=TaskType.CAUSAL_LM,
+        modules_to_save=["embed_tokens", "lm_head"]
     )
 
+    # Apply LoRA
     model = get_peft_model(model, lora_config)
-    print_info("LoRA setup complete!")
-    print_info(f"Trainable parameters: {model.print_trainable_parameters()}")
 
-
+    # Verify parameters
+    trainable_params, all_params = model.get_nb_trainable_parameters()
+    print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
+        
+    
 def create_training_args():
     """Create training arguments namespace"""
     args = argparse.Namespace()
@@ -106,7 +110,7 @@ def create_training_args():
     args.gradient_accumulation_steps = 1
     args.evaluation_strategy = "steps"
     args.eval_accumulation_steps = 1
-    args.eval_steps = 20
+    args.eval_steps = 100
     args.save_strategy = "steps"
     args.save_steps = 1000
     args.save_total_limit = 1
@@ -419,7 +423,30 @@ def compute_metrics(eval_pred):
             ious.extend(iou)
     return {"iou": np.mean(ious)}
 
-
+class NaNDetectionCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        # Check model parameters for NaN
+        model = kwargs.get('model')
+        if model:
+            for name, param in model.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"NaN detected in parameter {name} at step {state.global_step}")
+                    control.should_training_stop = True
+                    return control
+                if param.grad is not None and torch.isnan(param.grad).any():
+                    print(f"NaN detected in gradient of {name} at step {state.global_step}")
+                    control.should_training_stop = True
+                    return control
+        
+        return control
+    
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        # This is where logs are available
+        if logs and 'train_loss' in logs:
+            if torch.isnan(torch.tensor(logs['train_loss'])):
+                print(f"NaN loss at step {state.global_step}: {logs}")
+                control.should_training_stop = True
+        return control
 def main():
     cmd_args = parse_arguments()
 
@@ -491,9 +518,10 @@ def main():
     else:
         raise NotImplementedError
 
-    model.get_model().initialize_multimodal_components()
+
 
     if cmd_args.freeze_backbone:
+    # if True:
         print_info("Freezing backbone...")
         model.model.requires_grad_(False)
 
@@ -510,6 +538,7 @@ def main():
         model=model,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
+              max_grad_norm=1.0, 
             per_device_train_batch_size=training_args.per_device_train_batch_size,
             per_device_eval_batch_size=training_args.per_device_eval_batch_size,
             num_train_epochs=training_args.num_train_epochs,
@@ -521,8 +550,10 @@ def main():
             logging_steps=int(training_args.logging_steps),
             save_strategy=training_args.save_strategy,
             save_steps=training_args.save_steps,
-            fp16=training_args.fp16,
-            bf16=training_args.bf16,
+            # fp16=training_args.fp16,
+            # bf16=training_args.bf16,
+            fp16=False,  # Disable if currently True
+            bf16=False,  # Disable if currently True
             learning_rate=training_args.learning_rate,  # Added learning_rate
             weight_decay=training_args.weight_decay,  # Added weight_decay
             warmup_ratio=training_args.warmup_ratio,  # Added warmup_ratio
@@ -542,11 +573,11 @@ def main():
         eval_dataset=val_set,
         tokenizer=tokenizer,
         data_collator=collator,
+         callbacks=[NaNDetectionCallback()]
         # compute_metrics=compute_metrics,
         # preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
-    # Start training
-    torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(True, check_nan=True)
     trainer.train()
     print_info("Training complete!")
     print("evaluate")

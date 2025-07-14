@@ -45,18 +45,18 @@ class VisionEncoder(nn.Module):
         self._is_built = False
 
     def build_components(self):
-        """Build vision tower and projector"""
-        print("Building multimodal vision tower, mm_projector components...")
-        if self._is_built:
-            return
-        if self.vision_tower_config:
-            self.vision_tower = build_vision_tower(
-                self.vision_tower_config,
-            )
-            print("Vision tower built successfully.")
-            self.mm_projector = build_mm_projector(self.mm_projector_config)
-            print("MM projector built successfully.")
-            self._is_built = True
+            """Build vision tower and projector"""
+            print("Building multimodal vision tower, mm_projector components...")
+            if self._is_built:
+                return
+            if self.vision_tower_config:
+                self.vision_tower = build_vision_tower(
+                    self.vision_tower_config,
+                )
+                print("Vision tower built successfully.")
+                self.mm_projector = build_mm_projector(self.mm_projector_config)
+                print("MM projector built successfully.")
+                self._is_built = True
 
     def encode_images(self, images: torch.Tensor) -> Optional[torch.Tensor]:
         """Encode images to features"""
@@ -64,7 +64,9 @@ class VisionEncoder(nn.Module):
             return None
 
         image_features = self.vision_tower(images)
+        # print("after vision tower stats", image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         image_features = self.mm_projector(image_features)
+        # print("after mm projector stats",  image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         return image_features
 
     def load_pretrained_weights(self, vision_path: str, projector_path: str):
@@ -96,57 +98,6 @@ class VisionEncoder(nn.Module):
                     f"Warning: Failed to load projector weights from {projector_path}: {e}"
                 )
 
-
-class TracLlama3Model(nn.Module):
-    """Trac Phi3 base model with multimodal capabilities"""
-
-    # config_class = TracPhi3Config
-
-    def __init__(
-        self, config, model_tag="tiny-llama", module_config_path="config/llama.yaml"
-    ):
-        super().__init__()
-        with open(module_config_path, "r") as f:
-            module_config = yaml.safe_load(f)
-        module_config = dict_to_namespace(module_config)
-        if model_tag == "tiny-llama":
-            self.model_tag = "tiny-llama"
-            model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, device_map=None, torch_dtype=torch.float32
-            )
-            self.model.resize_token_embeddings(config.vocab_size)
-            self.module_configs = module_config.tiny_llama
-        else:
-            raise NotImplementedError
-
-        self.vision_encoder = VisionEncoder(self.module_configs.vision_encoder)
-        self.bbox3d_predictor = BBox3DPredictor(self.module_configs.bbox_predictor)
-        self.multimodal_processor = MultimodalProcessor(
-            self.vision_encoder, image_token_id=config.img_token_id
-        )
-        self.embed_tokens = self.model.model.embed_tokens
-
-    def forward(self, **kwargs):
-        return self.model(**kwargs)
-
-    def generate(self, **kwargs):
-        return self.model.generate(**kwargs)
-
-    def initialize_multimodal_components(self):
-        """Initialize all multimodal components"""
-        self.vision_encoder.build_components()
-
-        # Load pretrained weights if provided
-        # if (
-        #     hasattr(model_args, "pretrain_vision_model")
-        #     and model_args.pretrain_vision_model
-        # ):
-        #     vision_path = model_args.pretrain_vision_model
-        #     projector_path = getattr(model_args, "pretrain_mm_mlp_adapter", None)
-        #     self.vision_encoder.load_pretrained_weights(vision_path, projector_path)
-
-
 class TracLlamaConfig(PretrainedConfig):
     model_type = "TracLlama3Model"
 
@@ -169,10 +120,32 @@ class TracLlamaForCausalLM(PreTrainedModel):
     def __init__(self, config):
         print("init Trac llama")
         super().__init__(config)
-        self.model = self.init_model(config.child_config)
+        model_tag =  "tiny-llama"
+        module_config_path = "config/llama.yaml"
+        with open(module_config_path, "r") as f:
+            module_config = yaml.safe_load(f)
+        module_config = dict_to_namespace(module_config)
+        if model_tag == "tiny-llama":
+            self.model_tag = "tiny-llama"
+            model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, device_map=None, torch_dtype=torch.float32
+            )
+            self.model.resize_token_embeddings(config.vocab_size)
+            self.module_configs = module_config.tiny_llama
+        else:
+            raise NotImplementedError
+
+        self.vision_encoder = VisionEncoder(self.module_configs.vision_encoder)
+        self.bbox3d_predictor = BBox3DPredictor(self.module_configs.bbox_predictor)
+        self.multimodal_processor = MultimodalProcessor(
+            self.vision_encoder, image_token_id=config.img_token_id
+        )
+        self.embed_tokens = self.model.model.embed_tokens
+
+        self.vision_encoder.build_components()
         print("finish init base model")
         self.vocab_size = config.vocab_size
-        self.embed_tokens = self.model.embed_tokens
 
     def init_model(self, config):
         return TracLlama3Model(config)
@@ -182,17 +155,17 @@ class TracLlamaForCausalLM(PreTrainedModel):
 
     def all_to_device(self, device="cuda"):
         self.model.to(device)
-        if self.model.vision_encoder.vision_tower:
-            self.model.vision_encoder.vision_tower.to(device)
-        if self.model.vision_encoder.mm_projector:
-            self.model.vision_encoder.mm_projector.to(device)
-        if self.model.bbox3d_predictor.enabled:
-            self.model.bbox3d_predictor.to(device)
+        if self.vision_encoder.vision_tower:
+            self.vision_encoder.vision_tower.to(device)
+        if self.vision_encoder.mm_projector:
+            self.vision_encoder.mm_projector.to(device)
+        if self.bbox3d_predictor.enabled:
+            self.bbox3d_predictor.to(device)
 
     def prepare_inputs_for_multimodal(self, *args, **kwargs):
         """Delegate to multimodal processor"""
-        return self.model.multimodal_processor.prepare_inputs_for_multimodal(
-            *args, embed_tokens_fn=self.model.embed_tokens, **kwargs
+        return self.multimodal_processor.prepare_inputs_for_multimodal(
+            *args, embed_tokens_fn=self.embed_tokens, **kwargs
         )
 
     def forward(
@@ -221,8 +194,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
                     labels=labels,
                 )
             )
-
-        outputs = self.model.forward(
+        outputs = self.model(
             input_ids=None,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_masks,
@@ -247,13 +219,16 @@ class TracLlamaForCausalLM(PreTrainedModel):
     ):
         """Handle 3D bounding box prediction"""
 
-        predictor = self.model.bbox3d_predictor.predict_bboxes
-        compute_bbox_loss = self.model.bbox3d_predictor.compute_bbox_loss
+        predictor = self.bbox3d_predictor.predict_bboxes
+        compute_bbox_loss = self.bbox3d_predictor.compute_bbox_loss
 
         if bbox_masks == None and bbox_gts == None:
+            print("predict bbox mode")
             vision_features = image_features
-            text_features = outputs.hidden_states[-1]
-            bbox_predictions = predictor(vision_features, text_features)
+            # text_features = outputs.hidden_states[-1]
+            # bbox_predictions = predictor(vision_features, text_features)
+            bbox_predictions = predictor(vision_features)
+            print("type bbox predictions", type(bbox_predictions))
             outputs["bbox_3d_pred"] = bbox_predictions
         else:
 
@@ -265,15 +240,16 @@ class TracLlamaForCausalLM(PreTrainedModel):
             masks = bbox_masks[bbox_samples]
 
             vision_features = image_features[bbox_samples]
-            text_features = outputs.hidden_states[-1][bbox_samples]
-            bbox_predictions = predictor(vision_features, text_features)
+            # text_features = outputs.hidden_states[-1][bbox_samples]
+            bbox_predictions = predictor(vision_features)
 
-            bbox_loss = compute_bbox_loss(
+            bbox_loss,ious = compute_bbox_loss(
                 bbox_preds=bbox_predictions,
                 targets=targets,
                 masks=masks,
             )
-
+            print("bbox loss", bbox_loss.item())
+            print("output loss", outputs.loss.item())
             outputs.loss = outputs.loss + bbox_loss
             outputs["bbox_3d_loss"] = bbox_loss
             outputs["bbox_3d_pred"] = bbox_predictions
@@ -353,6 +329,7 @@ AutoModelForCausalLM.register(TracLlamaConfig, TracLlamaForCausalLM)
 # AutoConfig.register("trac-phi3", TracPhi3Config)
 # AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 if __name__ == "__main__":
+   
     from collator import BboxAwareCollator
     from torch.utils.data import DataLoader
     from eval import evaluate
@@ -392,7 +369,7 @@ if __name__ == "__main__":
 
     model = TracLlamaForCausalLM(config)
 
-    model.get_model().initialize_multimodal_components()
+    # model.get_model().initialize_multimodal_components()
     model.all_to_device("cuda")
     # evaluate(model, dl,tokenizer,save_path="eval_result",skip_text_question=True)
     with torch.no_grad():

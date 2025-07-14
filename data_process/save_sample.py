@@ -6,8 +6,8 @@ import shutil
 
 from util import draw_3d_bbox_filled,draw_3d_bbox_wireframe,convert_list_slice_paths_to_3d,save_nifti
 def process():
-    sample_file="/home/ducnguyen/sync_local/repo/TracGPT/clean_data_3d/-1_overlap_slices/175c930c-edb9-4e33-bcd0-6d091228f704/train/data/OAS1_0056.json"
-    img_annot_dir="/home/ducnguyen/sync_local/repo/TracGPT/clean_data/train/image_with_bboxes"
+    sample_file="/root/VLMTrac/chunks/train/data/OAS1_0075.json"
+    img_annot_dir="/root/VLMTrac/2d_data/train/image_with_bboxes"
     with open(sample_file,"r") as f:
         data=json.load(f)
     p_id=data[0]["Patient ID"]
