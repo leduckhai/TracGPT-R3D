@@ -4,6 +4,7 @@ import torch.nn as nn
 from typing import List
 import numpy as np
 import torch.nn.functional as F
+from model.bbox3d.helper import corners_to_center
 
 class BboxAwareCollator:
     def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>"):
@@ -100,6 +101,7 @@ class BboxAwareCollator:
         
         bbox_gts = torch.stack(bbox_gts)
         bbox_gts = torch.clamp(bbox_gts, min=1e-3, max=1.0)  
+        bbox_gt=corners_to_center(bbox_gts)  # Convert to center format if needed
         return {
             'images': torch.stack(images),
             'input_ids': torch.stack(input_ids),
@@ -113,31 +115,7 @@ class BboxAwareCollator:
             'answers':answers   
         }
     
-class BboxPostProcessor:
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-    
-    def extract_coordinates_from_text(self, generated_text, answer_type):
-        """Extract coordinates from generated text"""
-        if answer_type == 'bbox_2d':
-            # Extract from <bbox>x,y,w,h</bbox> format
-            import re
-            pattern = r'<bbox>([\d,\.]+)</bbox>'
-            match = re.search(pattern, generated_text)
-            if match:
-                coords = [float(x.strip()) for x in match.group(1).split(',')]
-                return coords
-        
-        elif answer_type == 'bbox_3d':
-            # Extract from [x,y,z,w,h,d,rx,ry,rz] format
-            import re
-            pattern = r'\[([\d,\.\-\s]+)\]'
-            match = re.search(pattern, generated_text)
-            if match:
-                coords = [float(x.strip()) for x in match.group(1).split(',')]
-                return coords
-        
-        return None
+
     
     def validate_coordinates(self, coords, answer_type, image_size=None):
         """Validate extracted coordinates"""

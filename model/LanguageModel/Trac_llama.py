@@ -31,7 +31,7 @@ from model.bbox3d.builder import BBox3DPredictor
 from model.Encoder.encoder import build_vision_tower
 from model.Projector.projector import build_mm_projector
 from transformers import PreTrainedModel, PretrainedConfig
-
+from model.bbox3d.bbox_decoder import BBox3DDecoder
 
 class VisionEncoder(nn.Module):
     """Handles vision encoding and projection"""
@@ -64,9 +64,9 @@ class VisionEncoder(nn.Module):
             return None
 
         image_features = self.vision_tower(images)
-        # print("after vision tower stats", image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
+        print("after vision tower stats", image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         image_features = self.mm_projector(image_features)
-        # print("after mm projector stats",  image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
+        print("after mm projector stats",  image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         return image_features
 
     def load_pretrained_weights(self, vision_path: str, projector_path: str):
@@ -121,7 +121,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
         print("init Trac llama")
         super().__init__(config)
         model_tag =  "tiny-llama"
-        module_config_path = "config/llama.yaml"
+        module_config_path = "config/llama_yolo.yaml"
         with open(module_config_path, "r") as f:
             module_config = yaml.safe_load(f)
         module_config = dict_to_namespace(module_config)
@@ -145,11 +145,8 @@ class TracLlamaForCausalLM(PreTrainedModel):
 
         self.vision_encoder.build_components()
         print("finish init base model")
+        self.bbox_decoder=
         self.vocab_size = config.vocab_size
-
-    def init_model(self, config):
-        return TracLlama3Model(config)
-
     def get_model(self):
         return self.model
 
@@ -192,8 +189,10 @@ class TracLlamaForCausalLM(PreTrainedModel):
                     input_ids,
                     images,
                     labels=labels,
+                    replace_image_token=False
                 )
             )
+        print("inputs_embeds shape", inputs_embeds.shape,"labels shape", labels.shape,"image_features shape", image_features.shape,"attention_masks shape", attention_masks.shape)
         outputs = self.model(
             input_ids=None,
             inputs_embeds=inputs_embeds,
@@ -218,7 +217,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
         self, outputs, image_features, bbox_gts=None, bbox_masks=None
     ):
         """Handle 3D bounding box prediction"""
-
+        print("handle bbox")
         predictor = self.bbox3d_predictor.predict_bboxes
         compute_bbox_loss = self.bbox3d_predictor.compute_bbox_loss
 
@@ -243,15 +242,19 @@ class TracLlamaForCausalLM(PreTrainedModel):
             # text_features = outputs.hidden_states[-1][bbox_samples]
             bbox_predictions = predictor(vision_features)
 
-            bbox_loss,ious = compute_bbox_loss(
+            aux_loss = compute_bbox_loss(
                 bbox_preds=bbox_predictions,
                 targets=targets,
                 masks=masks,
             )
-            print("bbox loss", bbox_loss.item())
+            bbox_prediction_decoder = BBox3DDecoder(bbox_predictions)
+            print("bbox decode shape",bbox_prediction_decoder.shape)
+            # print("bbox loss", aux_loss.item())
+            for k,v in aux_loss.items():
+                print(f"bbox loss {k}", v.item())
             print("output loss", outputs.loss.item())
-            outputs.loss = outputs.loss + bbox_loss
-            outputs["bbox_3d_loss"] = bbox_loss
+            outputs.loss = outputs.loss + aux_loss["total_loss"]
+            outputs["bbox_3d_loss"] = aux_loss["total_loss"]
             outputs["bbox_3d_pred"] = bbox_predictions
 
         return outputs
@@ -325,9 +328,6 @@ from transformers import AutoConfig, AutoModelForCausalLM
 AutoConfig.register("TracLlama3Model", TracLlamaConfig)
 AutoModelForCausalLM.register(TracLlamaConfig, TracLlamaForCausalLM)
 
-# Register model to enable AutoModel.from_pretrained()
-# AutoConfig.register("trac-phi3", TracPhi3Config)
-# AutoModelForCausalLM.register(TracPhi3Config, TracPhi3ForCausalLM)
 if __name__ == "__main__":
    
     from collator import BboxAwareCollator
@@ -365,11 +365,7 @@ if __name__ == "__main__":
 
     print("vocab size", len(tokenizer))
     config = TracLlamaConfig(img_token_id=img_token_id, vocab_size=len(tokenizer))
-    # config=AutoConfig.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-
     model = TracLlamaForCausalLM(config)
-
-    # model.get_model().initialize_multimodal_components()
     model.all_to_device("cuda")
     # evaluate(model, dl,tokenizer,save_path="eval_result",skip_text_question=True)
     with torch.no_grad():
@@ -397,8 +393,6 @@ if __name__ == "__main__":
             bbox_mask = bbox_mask.to("cuda")
             position_ids = position_ids.to("cuda")
             print("forward pass")
-            # print("mask", bbox_mask)
-            # print("gt", bbox_gt)
             outputs = model(
                 input_ids=input_ids,
                 images=images,

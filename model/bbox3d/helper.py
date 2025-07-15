@@ -1,7 +1,9 @@
 from collections import defaultdict
 from scipy.optimize import linear_sum_assignment
 import torch
-
+import torch.nn as nn
+import torch.nn.functional as F
+from types import SimpleNamespace
 coord_bounds = {
     "x_min": 0,
     "x_max": 255,
@@ -24,6 +26,27 @@ def denormalize_boxes(normalized_boxes, coord_bounds=coord_bounds):
     denormalized[..., 5] = normalized_boxes[..., 5] * coord_bounds["z_max"]
     return denormalized
 
+def corners_to_center(boxes):
+    """
+    Convert bounding boxes from corner coordinates to center format.
+    
+    Args:
+        boxes: Tensor of shape (..., 6) where last dim is (x_min, y_min, z_min, x_max, y_max, z_max)
+    
+    Returns:
+        Tensor of shape (..., 6) where last dim is (cx, cy, cz, width, height, depth)
+    """
+    # Calculate center coordinates
+    cx = (boxes[..., 0] + boxes[..., 3]) / 2
+    cy = (boxes[..., 1] + boxes[..., 4]) / 2
+    cz = (boxes[..., 2] + boxes[..., 5]) / 2
+    
+    # Calculate dimensions
+    width = boxes[..., 3] - boxes[..., 0]
+    height = boxes[..., 4] - boxes[..., 1]
+    depth = boxes[..., 5] - boxes[..., 2]
+    
+    return torch.stack([cx, cy, cz, width, height, depth], dim=-1)
 
 def convert_model_to_gt_format(pred_boxes, normalize_coords=True):
     """
@@ -178,6 +201,8 @@ def compute_3d_iou_matrix(pred_boxes, gt_boxes):
 
     return iou_matrix
 
+def iou_loss(bbox1,bbox2,denormalize=False):
+    return 1-box3d_iou_single(bbox1,bbox2,denormalize=denormalize)
 
 def box3d_iou_single(bbox1, bbox2, denormalize=False):
     """
@@ -194,7 +219,7 @@ def box3d_iou_single(bbox1, bbox2, denormalize=False):
     if denormalize:
         box1 = denormalize_boxes(bbox1)
         box2 = denormalize_boxes(bbox2)
-    print("box1", box1.tolist(), "box2", box2.tolist())
+    # print("box1", box1.tolist(), "box2", box2.tolist())
     box1 = box1.squeeze()  # Converts [1,6] → [6]
     box2 = box2.squeeze()  # Converts [1,6] → [6]
     inter_min = torch.max(box1[:3], box2[:3])
@@ -210,38 +235,136 @@ def box3d_iou_single(bbox1, bbox2, denormalize=False):
     iou = inter_vol / union_vol
     # print("union_vol", union_vol, "iou", iou)
     return iou
-    # x1 = max(bbox1[0], bbox2[0])
-    # y1 = max(bbox1[1], bbox2[1])
-    # z1 = max(bbox1[2], bbox2[2])
-    # x2 = min(bbox1[3], bbox2[3])
-    # y2 = min(bbox1[4], bbox2[4])
-    # z2 = min(bbox1[5], bbox2[5])
-    
-    # # Calculate intersection volume
-    # if x2 > x1 and y2 > y1 and z2 > z1:
-    #     intersection = (x2 - x1) * (y2 - y1) * (z2 - z1)
-    # else:
-    #     intersection = 0
-    
-    # # Calculate volumes
-    # vol1 = (bbox1[3] - bbox1[0]) * (bbox1[4] - bbox1[1]) * (bbox1[5] - bbox1[2])
-    # vol2 = (bbox2[3] - bbox2[0]) * (bbox2[4] - bbox2[1]) * (bbox2[5] - bbox2[2])
-    
-    # # Calculate union and IoU
-    # union = vol1 + vol2 - intersection
-    # return intersection / union if union > 0 else 0
-    # inter_min = torch.max(box1[:3], box2[:3])
-    # inter_max = torch.min(box1[3:], box2[3:])
-    # inter_dim = (inter_max - inter_min).clamp(min=0)
-    # inter_vol = inter_dim.prod()
 
-    # # Volumes
-    # vol1 = (box1[3:] - box1[:3]).prod()
-    # vol2 = (box2[3:] - box2[:3]).prod()
+def compute_3d_volume(boxes):
+    """
+    Compute volume of 3D boxes.
+    Args:
+        boxes: (..., 6) tensor where last dim is (z,x,y,d,w,h)
+    Returns:
+        volumes: (...) tensor of box volumes
+    """
+    d, w, h = boxes[..., 3], boxes[..., 4], boxes[..., 5]
+    return d * w * h
 
-    # union_vol = vol1 + vol2 - inter_vol + 1e-8
-    # iou = inter_vol / union_vol
-    # return iou
+def compute_diagonal_length(boxes):
+    """
+    Compute diagonal length of 3D boxes.
+    Args:
+        boxes: (..., 6) tensor where last dim is (z,x,y,d,w,h)
+    Returns:
+        diags: (...) tensor of diagonal lengths
+    """
+    d, w, h = boxes[..., 3], boxes[..., 4], boxes[..., 5]
+    return torch.sqrt(d**2 + w**2 + h**2)
+
+def compute_3d_intersection(pred_boxes, gt_boxes):
+    """
+    Compute intersection volume between predicted and ground truth 3D boxes.
+    Args:
+        pred_boxes: (B, N, 6) - (z,x,y,d,w,h)
+        gt_boxes: (B, N, 6) - (z,x,y,d,w,h)
+    Returns:
+        intersection: (B, N) tensor of intersection volumes
+    """
+    # Convert to corner format (min_z, min_x, min_y, max_z, max_x, max_y)
+    def get_corners(boxes):
+        z, x, y, d, w, h = boxes.unbind(-1)
+        half_d, half_w, half_h = d/2, w/2, h/2
+        min_z, max_z = z - half_d, z + half_d
+        min_x, max_x = x - half_w, x + half_w
+        min_y, max_y = y - half_h, y + half_h
+        return torch.stack([min_z, min_x, min_y, max_z, max_x, max_y], dim=-1)
+    
+    pred_corners = get_corners(pred_boxes)  # (B, N, 6)
+    gt_corners = get_corners(gt_boxes)      # (B, N, 6)
+    
+    # Compute intersection for each box pair
+    min_z = torch.max(pred_corners[..., 0], gt_corners[..., 0])
+    min_x = torch.max(pred_corners[..., 1], gt_corners[..., 1])
+    min_y = torch.max(pred_corners[..., 2], gt_corners[..., 2])
+    
+    max_z = torch.min(pred_corners[..., 3], gt_corners[..., 3])
+    max_x = torch.min(pred_corners[..., 4], gt_corners[..., 4])
+    max_y = torch.min(pred_corners[..., 5], gt_corners[..., 5])
+    
+    # Clip to zero if no intersection
+    inter_d = torch.clamp(max_z - min_z, min=0)
+    inter_w = torch.clamp(max_x - min_x, min=0)
+    inter_h = torch.clamp(max_y - min_y, min=0)
+    
+    return inter_d * inter_w * inter_h  # (B, N)
+
+def standard_loss(bbox_preds, masks, targets, neg_weight=1.0, lambda_reg=1.0):
+        total_loss=[]
+        valid_batches = 0
+        
+        ious=[]
+        for b in range(len(bbox_preds)):
+            bbox_pred = bbox_preds[b]  # [num_preds, 6]
+            mask = masks[b]  # [max_num_gt]
+            target = targets[b]  # [max_num_gt, 6]
+            gt_boxes = target[mask]  # [num_valid_gt, 6]
+            if len(gt_boxes) == 0:
+                continue
+            gt_boxes = gt_boxes[:1]  # [1, 6]
+            mask = mask[:1]  # [1]
+            # Convert format if needed
+            # print("before convert_model_to_gt_format bbox_pred", bbox_pred.tolist())
+            pred_boxes_minmax = convert_model_to_gt_format(bbox_pred)
+            # print("pred_boxes_minmax ", pred_boxes_minmax.tolist())
+            # print("gt_boxes ", gt_boxes.tolist())
+            # batch_loss = F.smooth_l1_loss(
+            #     pred_boxes_minmax,
+            #     gt_boxes,
+            #     reduction='sum'  # Preserve magnitude
+            # )
+            mse_weight = 1.0
+            iou_weight = 2.0  # IoU loss is often more important
+            l2_weight = 0.0001  # Much smaller regularization
+            print("pred_boxes_minmax shape", pred_boxes_minmax, "gt_boxes shape", gt_boxes)
+            loss_iou= iou_loss(pred_boxes_minmax, gt_boxes, denormalize=True)
+            print("bbox iou", 1-loss_iou)
+            loss = mse_weight * F.mse_loss(pred_boxes_minmax, gt_boxes) + \
+                iou_weight * loss_iou + \
+                l2_weight * torch.sum(pred_boxes_minmax ** 2)
+            # l2_reg = 0.01 * torch.sum(pred_boxes_minmax ** 2)
+    
+            # loss = F.mse_loss(pred_boxes_minmax, gt_boxes) + l2_reg
+            # iou = box3d_iou_single(pred_boxes_minmax, gt_boxes, denormalize=True)
+
+            # total_loss.append( (loss_iou+ loss) )
+            total_loss.append(loss_iou + 0.1 * loss)
+        return torch.stack(total_loss).mean() if total_loss else torch.tensor(0.0), 0.0
+def diou_3d(pred_boxes, gt_boxes):
+    """
+    3D Distance-IoU Loss (DIoU)
+    Args:
+        pred_boxes: (B, N, 6) - (z,x,y,d,w,h)
+        gt_boxes: (B, N, 6) - (z,x,y,d,w,h)
+    Returns:
+        diou_loss: scalar tensor
+    """
+    # Compute 3D IoU
+    intersection = compute_3d_intersection(pred_boxes, gt_boxes)  # (B, N)
+    pred_vol = compute_3d_volume(pred_boxes)  # (B, N)
+    gt_vol = compute_3d_volume(gt_boxes)      # (B, N)
+    union = pred_vol + gt_vol - intersection
+    iou = intersection / (union + 1e-7)  # (B, N)
+    
+    # Compute center distance
+    pred_centers = pred_boxes[..., :3]  # (B, N, 3)
+    gt_centers = gt_boxes[..., :3]      # (B, N, 3)
+    c_dist = torch.norm(pred_centers - gt_centers, dim=-1)  # (B, N)
+    
+    # Compute diagonal distance of GT boxes
+    diag_dist = compute_diagonal_length(gt_boxes)  # (B, N)
+    
+    # DIoU = IoU - (center_dist / diagonal_dist)
+    diou = iou - (c_dist / (diag_dist + 1e-7))  # (B, N)
+    
+    # Loss = 1 - DIoU
+    return 1 - diou.mean()  # Scalar
 
 
 if __name__ == "__main__":

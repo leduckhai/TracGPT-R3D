@@ -10,7 +10,7 @@ from utils.type import dict_to_namespace
 # from model.bbox3d.builder import BBox3DPredictor
 from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
 from datetime import datetime
-from model.bbox3d.helper import compute_ious,convert_model_to_gt_format,denormalize_boxes
+from model.bbox3d.helper import compute_ious,convert_model_to_gt_format,denormalize_boxes,box3d_iou_single
 now = datetime.now()
 date_time_str = now.strftime("%Y-%m-%d++%H:%M:%S")
 from tqdm import tqdm
@@ -18,19 +18,24 @@ from tqdm import tqdm
 
 def evaluate_single(bbox_pred,bbox_gt,bbox_mask):
     # print("bbox mask",bbox_mask)
+    print("bbox gt shape",bbox_gt.shape)
+    print("bbox pred shape",bbox_pred.shape)
+    print("bbox mask shape",bbox_mask.shape)
     if torch.any(bbox_mask):
+        bbox_gt=bbox_gt[bbox_mask]
+        bbox_gt=bbox_gt[0].unsqueeze(0) 
         bbox_pred=convert_model_to_gt_format(bbox_pred)
-        print("bbox pred",bbox_pred)
-        bbox_pred_unormalized=denormalize_boxes(bbox_pred)
-        print("bbox pred unormalize",bbox_pred_unormalized)
-        bbox_gt_unormalized=denormalize_boxes(bbox_gt)
-        print("bbox gt unnormalze",bbox_gt_unormalized)
+        # bbox_pred_unormalized=denormalize_boxes(bbox_pred)
+        # bbox_gt_unormalized=denormalize_boxes(bbox_gt)
         
-        bbox_output=compute_ious(bbox_pred_unormalized, bbox_gt_unormalized, bbox_mask)
-        preds=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
-        gt=[label.detach().cpu().numpy() for label in bbox_output["gt"]]
-        iou=[iou.detach().cpu().numpy() for iou in bbox_output["iou"]]
-        return preds,gt,iou
+        iou=box3d_iou_single(bbox_pred, bbox_gt, denormalize=True)
+        iou= iou.detach().cpu().numpy()
+        # preds=[pred.detach().cpu().numpy() for pred in bbox_output["pred"]]
+        # gt=[label.detach().cpu().numpy() for label in bbox_output["gt"]]
+        # iou=[iou.detach().cpu().numpy() for iou in bbox_output["iou"]]
+        print("eval iou",iou)
+        return bbox_pred,bbox_gt,iou
+        # return iou
     return [],[],[]
 
 def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True,skip_text_question=False):
@@ -118,4 +123,19 @@ def evaluate(model,data_loader,tokenizer,save_path,save_bbox=True,skip_text_ques
     print("bert metrics detail",bert_metrics_detail)
     print("bert metrics all",metrics_all)
     
-    
+if __name__=="__main__":
+    """
+    Example usage of the evaluate function
+    """
+    # Load model, tokenizer, and data_loader
+    # model = ...  # Load your model here
+    # tokenizer = ...  # Load your tokenizer here
+    # data_loader = ...  # Create your data loader here
+
+    # Call the evaluate function
+    # evaluate(model, data_loader, tokenizer, save_path="/path/to/save")
+    bbox_preds = torch.randn(1,6)
+    bbox_gt=torch.rand(9,6)
+    bbox_mask=torch.tensor([True, False, True, True, False, True, False, True, True])
+    preds, gt, iou = evaluate_single(bbox_preds, bbox_gt, bbox_mask)
+    print("Predictions:", preds)

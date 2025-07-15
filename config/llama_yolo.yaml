@@ -28,9 +28,10 @@ tiny_llama:
       pooling_type: spatial
       pooling_size: 2
       # mm_projector_type: linear
-      mm_projector_type: minigpt
+      mm_projector_type: transpose
   
   bbox_predictor:
+    bbox_type: anchor
     bbox_head:
       in_channels: 1
       input_dim: 2048

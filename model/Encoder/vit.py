@@ -154,7 +154,8 @@ class ViT3DTower(nn.Module):
         vit_kwargs = {k: v for k, v in vit_kwargs.items() if v is not None}
 
         self.vision_tower = ViT(**vit_kwargs)
-
+        for param in self.vision_tower.parameters():
+            param.requires_grad = False
     def forward(self, images):
         last_feature, hidden_states = self.vision_tower(images)
         if self.select_layer == -1:
@@ -211,3 +212,26 @@ if __name__ == "__main__":
     model = model.to("cuda")
     output = model(img)
     print("Output shape:", output.shape)
+    #     Image Dimensions: The input image size is (32, 256, 256) (D, H, W)
+
+    # Patch Size: The patch size is (4, 16, 16) (patch_D, patch_H, patch_W)
+
+    # Patch Calculation:
+
+    # Depth (D) patches: 32 / 4 = 8
+
+    # Height (H) patches: 256 / 16 = 16
+
+    # Width (W) patches: 256 / 16 = 16
+
+    # Total patches: 8 * 16 * 16 = 2048
+
+    # So the 2048 comes from:
+
+    # 8 patches in depth dimension
+
+    # 16 patches in height dimension
+
+    # 16 patches in width dimension
+
+    # 8 × 16 × 16 = 2048 total patches

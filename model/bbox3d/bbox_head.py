@@ -4,6 +4,78 @@ import torch.nn.functional as F
 from types import SimpleNamespace
 
 
+class AnchorBBox3DHead(nn.Module):
+    def __init__(self,config,num_anchors=3):
+        super().__init__()
+        in_channels= config.in_channels if isinstance(config, SimpleNamespace) else in_channels
+        self.num_anchors = num_anchors
+        self.downsample = nn.Conv3d(in_channels, in_channels, kernel_size=2, stride=2)
+        self.conv = nn.Conv3d(
+            in_channels, num_anchors * 9, kernel_size=1
+        )  # 9 = (Δz,Δx,Δy, log(d),log(w),log(h), conf, cls...)
+
+        # Initialize anchors (example for 3 scales)
+        self.register_buffer(
+            "anchors",
+            torch.tensor(
+                [
+                    [0.1, 0.1, 0.1],  # Small objects (e.g., 10% of volume size)
+                    [0.3, 0.3, 0.3],  # Medium objects
+                    [0.5, 0.5, 0.5],  # Large objects
+                ]
+            ).float(),
+        )
+
+    def forward(self, x):
+        # x: (B, C, D, H, W)
+        # B = x.shape[0]
+        # # torch.Size([2, 1, 32, 64, 64])
+        # out= self.downsample(x)  # Downsample to (B, C, D/2, H/2, W/2)
+        # print("Downsampled shape:", out.shape)
+        # # [2, 1, 16, 32, 32])
+        # out= self.conv(out)  # (B, num_anchors*9, D/2, H/2, W/2)
+        # # ([2, 27, 16, 32, 32])
+        # print("Conv output shape:", out.shape)
+        # out = out.view(
+        #     B, self.num_anchors, 9, *out.shape[2:]
+        # )  # (B, num_anchors, 9, D/2, H/2, W/2)
+        # print("Reshaped output:", out.shape)
+        # # Reshaped output: torch.Size([2, 3, 9, 16, 32, 32])
+        # # Decode predictions
+        # Δzxy = torch.sigmoid(out[..., :3]) * 2 - 0.5  # Δz, Δx, Δy ∈ [-0.5, 1.5]
+        # print("Δzxy shape:", Δzxy.shape)
+        # # Δzxy shape: torch.Size([2, 3, 9, 16, 32, 3])
+        # log_dwh = out[..., 3:6]  # Log-scale dims
+        # # Log-scale dimensions shape: torch.Size([2, 3, 9, 16, 32, 3]
+        # print("Log-scale dimensions shape:", log_dwh.shape)
+        # conf = torch.sigmoid(out[..., 6])
+        # print("Confidence shape:", conf.shape)
+        # # Confidence shape: torch.Size([2, 3, 9, 16, 32])
+        # cls = torch.softmax(out[..., 7:], dim=-1)
+        # # 
+        # print("Class probabilities shape:", cls.shape)
+        # return Δzxy, log_dwh, conf, cls
+        B = x.shape[0]  # Batch size
+        # Input shape: [B, C, D, H, W] = [2, 1, 32, 64, 64]
+        
+        # Step 1: Downsample
+        out = self.downsample(x)  # [2, 1, 16, 32, 32] (stride=2)
+        
+        # Step 2: 1x1x1 Conv to predict anchor values
+        out = self.conv(out)  # [2, 27, 16, 32, 32] (num_anchors*9=27 channels)
+        
+        # Step 3: Reshape to separate anchors and predictions
+        out = out.view(B, self.num_anchors, 9, *out.shape[2:])  # [2, 3, 9, 16, 32, 32]
+        
+        # Step 4: Decode predictions (EXPLICIT SLICING)
+        Δzxy = torch.sigmoid(out[:, :, :3, :, :, :]) * 2 - 0.5  # [2, 3, 3, 16, 32, 32]
+        log_dwh = out[:, :, 3:6, :, :, :]  # [2, 3, 3, 16, 32, 32]
+        conf = torch.sigmoid(out[:, :, 6, :, :])  # [2, 3, 16, 32, 32]
+        # cls = torch.softmax(out[:, :, 7:, :, :, :], dim=2)  # [2, 3, 2, 16, 32, 32]
+        
+        return Δzxy, log_dwh, conf
+
+
 class BBox3DHead(nn.Module):
     """3D Bounding Box prediction head with dynamic output capability"""
 
@@ -12,12 +84,12 @@ class BBox3DHead(nn.Module):
         config: SimpleNamespace,
     ):
         super().__init__()
-        self.input_dim =config.input_dim
+        self.input_dim = config.input_dim
         self.hidden_dim = config.hidden_dim
         self.num_classes = config.num_classes
         self.max_bbox_len = config.max_bbox_len
         self.normalize_coords = config.normalize_coords
-     
+
         self.coord_bounds = {
             "x_min": config.coord_bounds.x_min,
             "x_max": config.coord_bounds.x_max,
@@ -32,17 +104,21 @@ class BBox3DHead(nn.Module):
             nn.Linear(self.input_dim, self.hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),
-            nn.Linear(self.hidden_dim,self.hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),
         )
 
         # 3D bbox regression: predicts normalized coordinates if enabled
         # Format: center (x,y,z) + dimensions (w,h,l) = 6 parameters (no rotation)
-        self.bbox_head = nn.Linear(self.hidden_dim, 6 * self.max_bbox_len)  # 6 params per bbox
+        self.bbox_head = nn.Linear(
+            self.hidden_dim, 6 * self.max_bbox_len
+        )  # 6 params per bbox
 
         if self.num_classes > 1:
-            self.cls_head = nn.Linear(self.hidden_dim, self.num_classes * self.max_bbox_len)
+            self.cls_head = nn.Linear(
+                self.hidden_dim, self.num_classes * self.max_bbox_len
+            )
         else:
             self.cls_head = None
 
@@ -58,14 +134,15 @@ class BBox3DHead(nn.Module):
                 print(f"Initialized {layer} with Xavier weights and bias=0.1")
 
         if isinstance(layer, nn.Conv2d):
-            nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+            nn.init.kaiming_normal_(layer.weight, mode="fan_out", nonlinearity="relu")
             nn.init.constant_(layer.bias, 0.1)
 
-    def forward(self, x,  apply_constraints=True):
+    def forward(self, x, apply_constraints=True):
         features = self.feature_extractor(x)
         bbox_pred = self.bbox_head(features).view(-1, self.max_bbox_len, 6)  # [B, N, 6]
-        bbox_pred=torch.sigmoid(bbox_pred) 
+        bbox_pred = torch.sigmoid(bbox_pred)
         return bbox_pred
+
     def convert_gt_to_model_format(self, gt_boxes):
         """
         Convert ground truth boxes from [x_min, y_min, z_min, x_max, y_max, z_max]
@@ -91,11 +168,8 @@ class BBox3DHead(nn.Module):
             [center_x, center_y, center_z, width, height, length], dim=-1
         )
 
-
         return model_boxes
 
-    
-     
     def _apply_dynamic_filtering(self, outputs, conf_threshold=0.5):
         """
         Apply dynamic filtering based on confidence scores

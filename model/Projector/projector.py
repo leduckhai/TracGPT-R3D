@@ -129,6 +129,8 @@ def build_mm_projector(config):
         return Minigpt(config)
     elif config.mm_projector_type == 'identity':
         return IdentityMap()
+    elif config.mm_projector_type == 'transpose':
+        return TransposeProjector(config)
     else:
         raise ValueError(f'Unknown projector type: {config.mm_projector_type}')
 
@@ -149,7 +151,7 @@ class SpatialPoolingProjector(nn.Module):
             modules = [nn.Linear(in_dim, out_dim)]
             for _ in range(1, depth):
                 modules.append(nn.Linear(out_dim, out_dim))
-            self.projector = nn.Sequential(*modules)
+            self.projector = nn.Sequential(modules)
         elif layer_type == 'mlp':
             depth = int(layer_num)
             modules = [nn.Linear(in_dim, out_dim)]
@@ -188,6 +190,55 @@ class SpatialPoolingProjector(nn.Module):
             num *= n
         return num
 
+
+class TransposeProjector(nn.Module):
+    def __init__(self,config, vit_dim=256, output_channels=1, patches=(8, 16, 16)):
+        super().__init__()
+        self.patches = patches
+        self.up1 = nn.Sequential(
+            nn.ConvTranspose3d(vit_dim, 256, kernel_size=2, stride=2),  # 2x up
+            nn.BatchNorm3d(256),
+            nn.ReLU()
+        )
+        self.up2 = nn.Sequential(
+            nn.ConvTranspose3d(256, 128, kernel_size=2, stride=2),  # 4x up
+            nn.BatchNorm3d(128),
+            nn.ReLU()
+        )
+        self.out_conv = nn.Conv3d(128, output_channels, kernel_size=1)  # Channel adjust
+
+    def forward(self, x):
+        # Input: (B, N, vit_dim) → reshape to 3D
+        B, N, C = x.shape
+        D, H, W = self.patches
+        x = x.permute(0, 2, 1).view(B, C, D, H, W)  # (B, C, D, H, W)
+        x = self.up1(x)  # 2x up
+        x = self.up2(x)  # 4x up
+        return self.out_conv(x)  # (B, output_channels, D*4, H*4, W*4)
+
+
+class UNetProjector(nn.Module):
+    def __init__(self, vit_dim, vit_layers):
+        super().__init__()
+        # ViT intermediate features (from specified layers)
+        self.skip_conns = vit_layers  
+        self.decoder_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.ConvTranspose3d(vit_dim, 256, 2, stride=2),
+                nn.BatchNorm3d(256),
+                nn.ReLU()
+            ) for _ in range(len(vit_layers))
+        ])
+        self.fuse = nn.Conv3d(256 * len(vit_layers), 256, kernel_size=1)
+
+    def forward(self, x, vit_intermediates):
+        # x: main ViT output; vit_intermediates: list of skip features
+        features = []
+        for i, (block, skip) in enumerate(zip(self.decoder_blocks, vit_intermediates)):
+            x = block(x)
+            x = x + skip  # Skip connection
+            features.append(x)
+        return self.fuse(torch.cat(features, dim=1))
 if __name__ == "__main__":
     import torch
     # config = SimpleNamespace(mm_hidden_size=2560, hidden_size=758)

@@ -7,19 +7,20 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class MultimodalProcessor(nn.Module):
     """Handles the fusion of text and vision inputs for multimodal processing"""
 
-    def __init__(self, vision_encoder, image_token_id: int ):
+    def __init__(self, vision_encoder, image_token_id: int, replace_image_token: bool = True, ):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.image_token_id = image_token_id 
         self.ignore_idx = -100  
         print("image token id:", self.image_token_id)
-
+        self.replace_image_token = replace_image_token
     def prepare_inputs_for_multimodal(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         images: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         embed_tokens_fn: Optional[callable] = None,
+        replace_image_token=False
     ) -> Tuple[
         Optional[torch.LongTensor],
         Optional[torch.FloatTensor],
@@ -31,52 +32,33 @@ class MultimodalProcessor(nn.Module):
             input_ids, position_ids, attention_mask, past_key_values,
             inputs_embeds, labels, image_features
         """
-        return self._prepare_multimodal_inputs(
-            input_ids,
-            images,
-            labels,
-            embed_tokens_fn,
-        )
-
-    def _prepare_text_only_inputs(
-        self,
-        input_ids: torch.LongTensor,
-        position_ids: Optional[torch.LongTensor],
-        attention_mask: Optional[torch.Tensor],
-        past_key_values: Optional[List[torch.FloatTensor]],
-        labels: Optional[torch.LongTensor],
-        embed_tokens_fn: callable,
-    ) -> Tuple:
-        """Handle text-only inputs"""
-        if embed_tokens_fn is not None:
-            inputs_embeds = embed_tokens_fn(input_ids)
-        else:
-            inputs_embeds = None
-
-        return (
-            input_ids,
-            position_ids,
-            attention_mask,
-            past_key_values,
-            inputs_embeds,
-            labels,
-            None,
-        )
-
-    def _prepare_multimodal_inputs(
-        self,
-        input_ids: torch.LongTensor,
-        images: torch.FloatTensor,
-        labels: Optional[torch.LongTensor],
-        embed_tokens_fn: callable,
-    ) -> Tuple:
-        """Handle multimodal inputs with vision and text fusion"""
+        batch_size = input_ids.shape[0]
+        print("batch size:", batch_size)
         image_features =  torch.as_tensor(self.vision_encoder.encode_images(images))
-        # image_features=image_features.to(input_ids.device)
         new_labels = []
         new_inputs_embeds = []
+        if not replace_image_token:
+            
+            for batch_idx in range(batch_size):
+                cur_input_ids = input_ids[batch_idx]
+                cur_labels = labels[batch_idx] if labels is not None else None
+                
+                new_label, new_embed = self. _process_single_sample_no_replace_image(
+                    cur_input_ids, cur_labels,  embed_tokens_fn
+                )
+                if new_label is not None:
+                    new_labels.append(new_label)
+                new_inputs_embeds.append(new_embed)
+            # print("len(new_labels):", len(new_labels))
+            # print("len(new_inputs_embeds):", len(new_inputs_embeds))
 
-        batch_size = input_ids.shape[0]
+            return (
+                torch.stack(new_inputs_embeds),
+                torch.stack(new_labels) if len(new_labels) > 0 else None,
+                image_features,
+            )
+        # image_features=image_features.to(input_ids.device)
+    
 
         for batch_idx in range(batch_size):
             cur_input_ids = input_ids[batch_idx]
@@ -96,6 +78,13 @@ class MultimodalProcessor(nn.Module):
             image_features,
         )
 
+    def _process_single_sample_no_replace_image(
+        self, input_ids, labels,  embed_tokens_fn=None
+    ):
+      
+        text_embed= embed_tokens_fn(input_ids)  
+        return  labels, text_embed
+    
     def _process_single_sample(
         self, input_ids, labels, image_features, embed_tokens_fn=None
     ):

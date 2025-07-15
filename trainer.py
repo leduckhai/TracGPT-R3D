@@ -21,61 +21,7 @@ class TracTrainer(Trainer):
         else:
             super().log(logs)
     
-    def compute_loss(self, model, inputs, return_outputs=False,num_items_in_batch=None):
-        outputs = model(**inputs)
-        
-        # Recursively check all tensors in outputs
-        def _check_nan(obj, path=""):
-            if isinstance(obj, torch.Tensor):
-                if torch.is_floating_point(obj) and torch.isnan(obj).any():
-                    print(f"NaN detected in {path} | Shape: {obj.shape} | Dtype: {obj.dtype}")
-                    return True
-            elif isinstance(obj, (list, tuple)):
-                for i, item in enumerate(obj):
-                    if _check_nan(item, f"{path}[{i}]"):
-                        return True
-            elif isinstance(obj, dict):
-                for key, value in obj.items():
-                    if _check_nan(value, f"{path}.{key}"):
-                        return True
-            elif isinstance(obj, DynamicCache):  # Special handling for cache
-                for layer_idx in range(len(obj.key_cache)):
-                    if _check_nan(obj.key_cache[layer_idx], f"{path}.key_cache[{layer_idx}]"):
-                        return True
-                    if _check_nan(obj.value_cache[layer_idx], f"{path}.value_cache[{layer_idx}]"):
-                        return True
-            return False
-        
-        if _check_nan(outputs, "outputs"):
-            print("\n=== NaN DETECTED ===")
-            self._log_debug_info(model, inputs)
-            breakpoint()
-            
-        loss = outputs.loss
-        return (loss, outputs) if return_outputs else loss
-
-    def _log_debug_info(self, model, inputs):
-        """Log detailed debugging information"""
-        print("\n=== Model State ===")
-        print(f"Model dtype: {next(model.parameters()).dtype}")
-        print(f"Input shapes: { {k: v.shape for k,v in inputs.items() if torch.is_tensor(v)} }")
-        
-        print("\n=== Input Data Check ===")
-        for k, v in inputs.items():
-            if torch.is_tensor(v):
-                print(f"{k}:")
-                print(f"- NaN: {torch.isnan(v).any().item()}")
-                print(f"- Inf: {torch.isinf(v).any().item()}")
-                print(f"- Min: {v.min().item()}")
-                print(f"- Max: {v.max().item()}")
-        
-        if hasattr(model, 'peft_config'):
-            print("\n=== LoRA Weights Check ===")
-            for name, param in model.named_parameters():
-                if 'lora' in name.lower():
-                    print(f"{name}:")
-                    print(f"- Weight NaN: {torch.isnan(param).any().item()}")
-                    print(f"- Grad NaN: {param.grad is not None and torch.isnan(param.grad).any().item()}")
+    
     def training_step(self, model, inputs, num_items_in_batch=None):
        
         with torch.no_grad():
@@ -190,9 +136,13 @@ class TracTrainer(Trainer):
             for pred, label, mask in zip(bbox_preds, bbox_labels, bbox_masks):
                 
                     pred, gt, iou = evaluate_single(pred, label, mask)
-                    if len(iou) > 0:
+                    if iou :
                         print(f"Batch {batch_idx}: IoU = {iou}")
-                        ious.extend(iou)
+                        # ious.extend(iou)
+                        if isinstance(iou, list):
+                            ious.extend(iou)
+                        else:
+                            ious.append(iou)
               
 
         if len(ious) == 0:

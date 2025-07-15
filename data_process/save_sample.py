@@ -4,7 +4,7 @@ import pickle
 import nibabel as nib
 import shutil
 
-from util import draw_3d_bbox_filled,draw_3d_bbox_wireframe,convert_list_slice_paths_to_3d,save_nifti
+from data_process.util import draw_3d_bbox_filled,draw_3d_bbox_wireframe,convert_list_slice_paths_to_3d,save_nifti
 def process():
     sample_file="/root/VLMTrac/chunks/train/data/OAS1_0075.json"
     img_annot_dir="/root/VLMTrac/2d_data/train/image_with_bboxes"
@@ -50,8 +50,33 @@ def process():
         save_nifti(grount_truth,f"test_gt_{i}_{n_concat}.nii.gz")
         save_nifti(bboxes_colors,f"test_pred_{i}_{n_concat}.nii.gz")
 
+def process_sample(image,bboxes,shape=(32,256,256)):
+   
+        
+        unormalize_bbox=[]
+        for bbox in bboxes:
+            x_min, y_min, z_min, x_max, y_max, z_max = bbox
+            print("bbox",bbox)
+            x_min=x_min*shape[2]
+            y_min=y_min*shape[1]
+            z_min=z_min*shape[0]
+            x_max=x_max*shape[2]
+            y_max=y_max*shape[1]
+            z_max=z_max*shape[0]
+            unormalize_bbox.append([x_min, y_min, z_min, x_max, y_max, z_max])
+        print("len unormalize_bbox",len(unormalize_bbox))
+        bboxes_colors=draw_3d_bbox_filled(shape,unormalize_bbox)
+        pred_path=f"image.nii.gz"
+        if os.path.exists(pred_path):
+            os.remove(pred_path)
+        gt_path=f"bbox.nii.gz"
+        if os.path.exists(gt_path):
+            os.remove(gt_path)
 
-    
+      
+        save_nifti(image,f"image.nii.gz")
+        save_nifti(bboxes_colors,f"bbox.nii.gz")
+        print("save successfully")
 
 if __name__ == "__main__":
     process()

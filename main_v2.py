@@ -110,7 +110,7 @@ def create_training_args():
     args.gradient_accumulation_steps = 1
     args.evaluation_strategy = "steps"
     args.eval_accumulation_steps = 1
-    args.eval_steps = 100
+    args.eval_steps = 40
     args.save_strategy = "steps"
     args.save_steps = 1000
     args.save_total_limit = 1
@@ -518,7 +518,12 @@ def main():
     else:
         raise NotImplementedError
 
-
+    wandb.watch(
+        model,
+        log="all",       # Logs gradients + parameters
+        log_freq=10,     # Log every 10 steps
+        log_graph=True,  # Optional: Log computation graph
+    )
 
     if cmd_args.freeze_backbone:
     # if True:
@@ -538,7 +543,7 @@ def main():
         model=model,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
-              max_grad_norm=1.0, 
+            max_grad_norm=1.0, 
             per_device_train_batch_size=training_args.per_device_train_batch_size,
             per_device_eval_batch_size=training_args.per_device_eval_batch_size,
             num_train_epochs=training_args.num_train_epochs,
