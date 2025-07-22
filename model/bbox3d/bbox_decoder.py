@@ -16,7 +16,95 @@ class BBox3DDecoder:
         self.conf_threshold = conf_threshold
         self.nms_threshold = nms_threshold
     
-    def decode_predictions(self, preds, class_preds=None, original_shape=None):
+    
+    def decode_predictions_v2(self, center_pred, delta_xyz, log_dwh, conf_pred):
+        """
+        Decode patch-based model predictions into meaningful 3D bounding boxes
+
+        Args:
+            center_pred (torch.Tensor): [B,4,4,4] - boolean mask marking the center of the patch
+            delta_xyz (torch.Tensor): [B,4,4,4,n_pred,3] - position offsets
+            log_dwh (torch.Tensor): [B,4,4,4,n_pred,3] - log-scale dimensions
+            conf_pred (torch.Tensor): [B,4,4,4,n_pred] - confidence scores
+            original_shape (tuple): Original image dimensions (D, H, W)
+
+        Returns:
+            list: List of dictionaries containing the decoded bounding boxes and scores for each batch
+        """
+        print("center_pred", center_pred.shape, "delta_zxy", delta_xyz.shape, "log_dwh", log_dwh.shape, "conf_pred", conf_pred.shape)
+        batch_preds = []
+        D, H, W = 4, 4, 4  # Spatial dimensions
+        B, p_x, p_y, p_z, n_pred, _ = delta_xyz.shape  # [B,4,4,4,5,3]
+        device = delta_xyz.device
+
+        center_pred = center_pred.to(device)  # Shape: [4,4,4]
+
+        # z_centers = torch.linspace(0, 1, D, device=device).view(1, 1,  D, 1, 1).expand(B, -1, D, H, W, n_pred, -1)  # [1,1,1,4,1,1]
+        # y_centers = torch.linspace(0, 1, H, device=device).view(1, 1,  1, H, 1).expand(B, -1, D, H, W, n_pred, -1)  # [1,1,1,1,4,1]
+        # x_centers = torch.linspace(0, 1, W, device=device).view(1, 1,  1, 1, W).expand(B, -1, D, H, W, n_pred, -1)  # [1,1,1,1,1,4]
+        z_centers = torch.linspace(0, 1, D, device=device).view(1, 1, 1, D, 1).expand(B, H, W, D, n_pred)
+        y_centers = torch.linspace(0, 1, H, device=device).view(1, H, 1, 1, 1).expand(B, H, W, D, n_pred)
+        x_centers = torch.linspace(0, 1, W, device=device).view(1, 1, W, 1, 1).expand(B, H, W, D, n_pred)
+
+        #  grid + offset
+        print("x center shape",x_centers.shape,  delta_xyz[..., 0].shape)
+        pred_cx = x_centers + delta_xyz[..., 0]  # [B,4,4,4,5]
+        pred_cy = y_centers + delta_xyz[..., 1]  # [B,4,4,4,5]
+        pred_cz = z_centers + delta_xyz[..., 2]  # [B,4,4,4,5]
+
+        # 4. Decode box dimensions: exp(log_scale)
+        pred_w = torch.exp(log_dwh[..., 1])  # [B,4,4,4,5]
+        pred_h = torch.exp(log_dwh[..., 0])  # [B,4,4,4,5]
+        pred_d = torch.exp(log_dwh[..., 2])  # [B,4,4,4,5]
+
+        # 5. Stack into [cx, cy, cz, w, h, d] format
+        pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=-1)  # [B,4,4,4,5,6]
+
+        pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=-1)  # [B,4,4,4,5,6]
+        print("pred_boxes",pred_boxes.shape)
+        batch_results = []
+        for b in range(B):
+            boxes_flat = pred_boxes[b].reshape(-1, 6)  # [4*4*4*5, 6]
+            conf_flat = conf_pred[b].flatten()         # [4*4*4*5]
+            print("boxes_flat",boxes_flat.shape,"conf_flat",conf_flat.shape)
+            center_mask = center_pred[b].unsqueeze(-1).expand(-1, -1, -1, n_pred).reshape(-1)  # [4*4*4*5]
+            print("center_mask",center_mask)
+            center_mask = center_mask[center_mask>0.0].bool()
+            combined_mask = (conf_flat > self.conf_threshold) & center_mask  # [4*4*4*5]
+
+            if not combined_mask.any():
+                batch_results.append({
+                    'boxes': torch.empty(0, 6, device=device),
+                    'scores': torch.empty(0, device=device),
+                })
+                continue
+
+            valid_boxes = boxes_flat[combined_mask]  # [N_valid, 6]
+            valid_scores = conf_flat[combined_mask]  # [N_valid]
+
+         
+            final_scores = valid_scores
+            valid_class_indices = None
+
+            if len(valid_boxes) > 0:
+                # keep_indices = self.nms_3d(valid_boxes, final_scores, self.nms_threshold)
+                # final_boxes = valid_boxes[keep_indices]
+                # final_scores = final_scores[keep_indices]
+                # final_classes = valid_class_indices[keep_indices] if valid_class_indices is not None else None
+                final_boxes=valid_boxes
+                final_scores=valid_scores
+            else:
+                final_boxes = torch.empty(0, 6, device=device)
+                final_scores = torch.empty(0, device=device)
+
+            batch_results.append({
+                'boxes': final_boxes,
+                'scores': final_scores,
+            })
+
+        return batch_results
+    def decode_predictions(self,center_pred, delta_zxy, log_dwh, conf_pred, class_preds=None, original_shape=None):
+        # print("center_pred",center_pred.shape,"delta_zxy",delta_zxy.shape,"log_dwh",log_dwh.shape,"conf_pred",conf_pred.shape,"class_preds",class_preds.shape)
         """
         Decode model predictions into meaningful 3D bounding boxes
         
@@ -35,7 +123,6 @@ class BBox3DDecoder:
                 - scores: (N,) tensor of confidence scores
                 - classes: (N,) tensor of predicted class indices (if class_preds provided)
         """
-        delta_zxy, log_dwh, conf_pred = preds
         B, num_anchors, _, D, H, W = delta_zxy.shape
         device = delta_zxy.device
         
@@ -88,28 +175,17 @@ class BBox3DDecoder:
             valid_boxes = boxes_flat[valid_mask]
             valid_scores = conf_flat[valid_mask]
             
-            # Handle class predictions if provided
-            if class_preds is not None:
-                class_scores_b = class_scores[b].flatten()
-                class_indices_b = class_indices[b].flatten()
-                valid_class_scores = class_scores_b[valid_mask]
-                valid_class_indices = class_indices_b[valid_mask]
-                # Combine confidence and class scores
-                final_scores = valid_scores * valid_class_scores
-            else:
-                final_scores = valid_scores
-                valid_class_indices = None
+            final_scores = valid_scores
+            valid_class_indices = None
             
             # Apply Non-Maximum Suppression
             if len(valid_boxes) > 0:
                 keep_indices = self.nms_3d(valid_boxes, final_scores, self.nms_threshold)
                 final_boxes = valid_boxes[keep_indices]
                 final_scores = final_scores[keep_indices]
-                final_classes = valid_class_indices[keep_indices] if valid_class_indices is not None else None
             else:
                 final_boxes = torch.empty(0, 6, device=device)
                 final_scores = torch.empty(0, device=device)
-                final_classes = torch.empty(0, dtype=torch.long, device=device) if class_preds is not None else None
             
             # Scale to original volume size if provided
             if original_shape is not None:
@@ -118,12 +194,12 @@ class BBox3DDecoder:
             batch_results.append({
                 'boxes': final_boxes,
                 'scores': final_scores,
-                'classes': final_classes
             })
         
         return batch_results
     
     def nms_3d(self, boxes, scores, threshold):
+        print("nms_3d boxes", boxes.shape, "scores", scores.shape)
         """
         3D Non-Maximum Suppression
         
@@ -135,32 +211,63 @@ class BBox3DDecoder:
         Returns:
             keep_indices: indices of boxes to keep
         """
-        if len(boxes) == 0:
+        if boxes.numel() == 0:
             return torch.empty(0, dtype=torch.long, device=boxes.device)
         
-        # Sort by scores (descending)
-        sorted_indices = torch.argsort(scores, descending=True)
+        # Sort boxes by descending scores
+        sorted_scores, sorted_indices = scores.sort(descending=True)
+        boxes = boxes[sorted_indices]
         
         keep = []
         while len(sorted_indices) > 0:
             # Keep the highest scoring box
-            current_idx = sorted_indices[0]
-            keep.append(current_idx)
+            current_idx = 0  # Always the first one since we sorted
+            keep.append(sorted_indices[current_idx].item())  # Store the original index
             
             if len(sorted_indices) == 1:
                 break
-            
+                
             # Calculate IoU with remaining boxes
             current_box = boxes[current_idx:current_idx+1]
-            remaining_boxes = boxes[sorted_indices[1:]]
+            remaining_boxes = boxes[current_idx+1:]
             
             ious = self.compute_iou_3d(current_box, remaining_boxes)
             
             # Remove boxes with IoU > threshold
             mask = ious.squeeze() <= threshold
-            sorted_indices = sorted_indices[1:][mask]
+            boxes = boxes[current_idx+1:][mask]
+            sorted_indices = sorted_indices[current_idx+1:][mask]
         
-        return torch.stack(keep) if keep else torch.empty(0, dtype=torch.long, device=boxes.device)
+        if not keep:
+            return torch.empty(0, dtype=torch.long, device=boxes.device)
+        
+        return torch.tensor(keep, dtype=torch.long, device=boxes.device)
+        # if len(boxes) == 0:
+        #     return torch.empty(0, dtype=torch.long, device=boxes.device)
+        
+        # # Sort by scores (descending)
+        # sorted_indices = torch.argsort(scores, descending=True)
+        
+        # keep = []
+        # while len(sorted_indices) > 0:
+        #     # Keep the highest scoring box
+        #     current_idx = sorted_indices[0]
+        #     keep.append(current_idx)
+            
+        #     if len(sorted_indices) == 1:
+        #         break
+            
+        #     # Calculate IoU with remaining boxes
+        #     current_box = boxes[current_idx:current_idx+1]
+        #     remaining_boxes = boxes[sorted_indices[1:]]
+            
+        #     ious = self.compute_iou_3d(current_box, remaining_boxes)
+            
+        #     # Remove boxes with IoU > threshold
+        #     mask = ious.squeeze() <= threshold
+        #     sorted_indices = sorted_indices[1:][mask]
+        # # print("keep indices", keep)
+        # return torch.stack(keep) if keep else torch.empty(0, dtype=torch.long, device=boxes.device)
     
     def compute_iou_3d(self, boxes1, boxes2):
         """

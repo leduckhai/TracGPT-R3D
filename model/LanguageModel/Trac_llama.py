@@ -65,8 +65,8 @@ class VisionEncoder(nn.Module):
 
         image_features = self.vision_tower(images)
         print("after vision tower stats", image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
-        image_features = self.mm_projector(image_features)
-        print("after mm projector stats",  image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
+        # image_features = self.mm_projector(image_features)
+        # print("after mm projector stats",  image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         return image_features
 
     def load_pretrained_weights(self, vision_path: str, projector_path: str):
@@ -145,7 +145,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
 
         self.vision_encoder.build_components()
         print("finish init base model")
-        self.bbox_decoder=
+        self.bbox_decoder=BBox3DDecoder(conf_threshold=0.5, nms_threshold=0.4)
         self.vocab_size = config.vocab_size
     def get_model(self):
         return self.model
@@ -179,7 +179,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
         output_hidden_states: bool = True,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-
+        print("bbox gts shape",bbox_gts.shape)
         pre_input_ids = input_ids
 
         if inputs_embeds == None:
@@ -240,22 +240,37 @@ class TracLlamaForCausalLM(PreTrainedModel):
 
             vision_features = image_features[bbox_samples]
             # text_features = outputs.hidden_states[-1][bbox_samples]
-            bbox_predictions = predictor(vision_features)
-
+            # bbox_predictions = predictor(vision_features)
+            center_pred,delta_xyz,log_dwh,conf= predictor(vision_features)
+            if delta_xyz is None:
+                print ("delta_xyz is None, skip bbox prediction")
+                return outputs
+            print("delta_xyz shape", delta_xyz.shape)
+            if log_dwh is not  None:
+                print("log_dwh shape", log_dwh.shape)
+            if conf is not None:
+                print("conf shape", conf.shape)
+            print("target shape white", targets.shape)
             aux_loss = compute_bbox_loss(
-                bbox_preds=bbox_predictions,
+                delta_xyz=delta_xyz,
+                log_dwh=log_dwh,
+                conf_pred=conf,
                 targets=targets,
                 masks=masks,
             )
-            bbox_prediction_decoder = BBox3DDecoder(bbox_predictions)
-            print("bbox decode shape",bbox_prediction_decoder.shape)
-            # print("bbox loss", aux_loss.item())
+            bbox_prediction_decoder = self.bbox_decoder.decode_predictions_v2(center_pred,delta_xyz,log_dwh,conf)
+            print("bbox decode shape",len(bbox_prediction_decoder))
+            bbox_pred=[d["boxes"] for d in bbox_prediction_decoder]
+            # print("bbox_pred 0",bbox_pred[0].shape)
+            for bboxes in bbox_pred:
+                print("bbox pred shape", bboxes.shape)
+                # print("bbox pred min max")
             for k,v in aux_loss.items():
                 print(f"bbox loss {k}", v.item())
             print("output loss", outputs.loss.item())
             outputs.loss = outputs.loss + aux_loss["total_loss"]
             outputs["bbox_3d_loss"] = aux_loss["total_loss"]
-            outputs["bbox_3d_pred"] = bbox_predictions
+            outputs["bbox_3d_pred"] = bbox_pred
 
         return outputs
 
@@ -370,33 +385,37 @@ if __name__ == "__main__":
     # evaluate(model, dl,tokenizer,save_path="eval_result",skip_text_question=True)
     with torch.no_grad():
         for i, batch in enumerate(dl):
-            if i == 5:
+            if i == 1:
                 break
             (
-                images,
-                input_ids,
-                attention_mask,
-                labels,
-                bbox_gt,
-                bbox_mask,
-                position_ids,
-                answer_types,
-                questions,
-                answers,
+            images,
+            input_ids,
+            attention_mask,
+            positive_centers,
+            labels,
+            center_bbox_gts,
+            bbox_mask,
+            position_ids,
+            answer_types,
+            questions,
+            answers,
+            corner_bbox_gts,
             ) = batch.values()
             images = images.to("cuda")
             print("img shape", images.shape)
             input_ids = input_ids.to("cuda")
             attention_mask = attention_mask.to("cuda")
             labels = labels.to("cuda")
-            bbox_gt = bbox_gt.to("cuda")
+            center_bbox_gts = center_bbox_gts.to("cuda")
+            
             bbox_mask = bbox_mask.to("cuda")
             position_ids = position_ids.to("cuda")
             print("forward pass")
+            print("center_bbox_gts shape",center_bbox_gts.shape)
             outputs = model(
                 input_ids=input_ids,
                 images=images,
-                bbox_gts=bbox_gt,
+                bbox_gts=center_bbox_gts,
                 bbox_masks=bbox_mask,
                 labels=labels,
                 attention_masks=attention_mask,

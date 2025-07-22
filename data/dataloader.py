@@ -18,7 +18,7 @@ import os
 import numpy as np
 import json
 from monai.transforms import Compose, ResizeD,EnsureChannelFirstD,SqueezeDimD
-# from monai.transforms import ScaleIntensityRange
+from monai.transforms import ScaleIntensityRanged
 # from monai.transforms import NormalizeIntensityd, ScaleIntensityRanged
 
 from data_process.save_sample import process_sample
@@ -41,14 +41,14 @@ class TracDataset(Dataset):
                 EnsureChannelFirstD(keys=["image"],channel_dim="no_channel"),
     
     # Scale intensity
-    # ScaleIntensityRanged(
-    #     keys=["image"],
-    #     a_min=0,
-    #     a_max=255,
-    #     b_min=0.0,
-    #     b_max=1.0,
-    #     clip=True,
-    # ),
+    ScaleIntensityRanged(
+        keys=["image"],
+        a_min=0,
+    a_max=255,
+        b_min=0.0,
+        b_max=1.0,
+        clip=True,
+    ),
 
     ResizeD(
         keys=["image"],

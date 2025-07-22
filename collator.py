@@ -4,10 +4,10 @@ import torch.nn as nn
 from typing import List
 import numpy as np
 import torch.nn.functional as F
-from model.bbox3d.helper import corners_to_center
-
+from model.bbox3d.helper import corners_to_center,center_to_corners,get_center
 class BboxAwareCollator:
-    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>"):
+    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>",patch_grid=[4,4,4]):
+        self.patch_grid=patch_grid
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.max_bbox_length = max_bbox_length
@@ -48,37 +48,47 @@ class BboxAwareCollator:
         input_ids = []
         attention_masks = []
         labels = []
-        bbox_gts=[
-        ]
+   
+        corner_bbox_gts=[]
+        center_bbox_gts=[]
         bbox_masks=[]
         answer_types = []
         questions=[]
         answers=[]
+        positive_centers=[]
         for sample in batch:
             images.append(sample['image'])
             answer_types.append(sample['answer_type'])
             
             if sample['answer_type'] in ['bbox_3d'] and sample.get('bbox_3d') is not None:
-                bbox_data = sample['bbox_3d'] 
-
-                bbox_gt= self.pad_bboxes_to_fixed_size(bbox_data, self.max_bbox_length)  # Pad to fixed size of 2 bboxes
+                corner_bbox_data = sample['bbox_3d']
+                bbox_mask=self.create_bbox_attention_mask(len(corner_bbox_data  ), self.max_bbox_length)
+                corner_bbox_data= self.pad_bboxes_to_fixed_size( corner_bbox_data  , self.max_bbox_length)  # Pad to fixed size of 2 bboxes
+    
                 
-                bbox_mask=self.create_bbox_attention_mask(len(bbox_data), self.max_bbox_length)
-                
-                formatted_answer = self.format_bbox_answer(bbox_data, sample['answer_type'])
+                formatted_answer = self.format_bbox_answer(corner_bbox_data, sample['answer_type'])
                 
             else:
                 formatted_answer = sample['answer']
                 full_text = f"Question: {sample['question']} Answer: {formatted_answer}"
-                bbox_gt=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
+                corner_bbox_data=self.pad_bboxes_to_fixed_size([[0.0]*6], self.max_bbox_length)
                 bbox_mask=self.create_bbox_attention_mask(0, self.max_bbox_length)
-            
+            # print("bbox mask",bbox_mask)
             questions.append(sample['question'])
             answers.append(formatted_answer)
             question_text = f"Question: {sample['question']} Answer:"
             full_text = f"{question_text} {self.image_tk} Answer: {formatted_answer} {self.end_token}"
-            bbox_gts.append(torch.tensor(bbox_gt, dtype=torch.float32))
+            corner_bbox_data_ts= torch.tensor(corner_bbox_data, dtype=torch.float32)
+            center_bbox_data_ts = corners_to_center(corner_bbox_data_ts)
+            
+            positive_center_bbbox=center_bbox_data_ts
+            center_bbox_gts.append(positive_center_bbbox)  
+            positive_center = get_center(positive_center_bbbox, patch_grid=self.patch_grid)
+            positive_centers.append(positive_center)
+            corner_bbox_gts.append(corner_bbox_data_ts)
+            
             bbox_masks.append(torch.tensor(bbox_mask, dtype=torch.bool))
+            
             encoded = self.tokenizer(
                 full_text,
                 max_length=self.max_length,
@@ -95,24 +105,23 @@ class BboxAwareCollator:
             question_len = len(self.tokenizer(question_text, return_tensors="pt")["input_ids"][0])
             label[:question_len] = -100
             labels.append(label)
-            # print("n vision token", (encoded['input_ids']==self.tokenizer.convert_tokens_to_ids(self.image_tk_name)).sum().item())
         
         position_ids = torch.arange(0, self.max_length).expand(len(batch), -1).long()
-        
-        bbox_gts = torch.stack(bbox_gts)
-        bbox_gts = torch.clamp(bbox_gts, min=1e-3, max=1.0)  
-        bbox_gt=corners_to_center(bbox_gts)  # Convert to center format if needed
+    
+        # corner_bbox_gts=center_to_corners(center_bbox_gts)
         return {
             'images': torch.stack(images),
             'input_ids': torch.stack(input_ids),
             'attention_masks': torch.stack(attention_masks),
+            'positive_centers':torch.stack(positive_centers) if positive_centers else None,
             'labels': torch.stack(labels),
-            'bbox_gts': bbox_gts,
+            'center_bbox_gts': torch.stack(center_bbox_gts) if center_bbox_gts else None,
             'bbox_masks': torch.stack( bbox_masks),
             'position_ids': position_ids  ,
             'answer_types': answer_types,
             'questions':questions,
-            'answers':answers   
+            'answers':answers   ,
+            'corner_bbox_gts': torch.stack( corner_bbox_gts) if corner_bbox_gts else None,  # Add corner bbox if neededcorner_bbox_gts,  # Add corner bbox if needed
         }
     
 

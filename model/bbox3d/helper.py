@@ -13,6 +13,17 @@ coord_bounds = {
     "z_max": 31,
 }
 
+def get_center(gt_boxes, patch_grid=[4,4,4]):
+    positive_center = torch.zeros(patch_grid, dtype=torch.float32)
+    X, Y, Z = patch_grid
+  
+    for bbox in gt_boxes:
+        x, y, z = bbox[0], bbox[1], bbox[2]
+        x_idx = min(int(x * X), X - 1)
+        y_idx = min(int(y * Y), Y - 1)
+        z_idx = min(int(z * Z), Z - 1)
+        positive_center[x_idx, y_idx, z_idx] += 1
+    return positive_center
 
 def denormalize_boxes(normalized_boxes, coord_bounds=coord_bounds):
 
@@ -47,6 +58,30 @@ def corners_to_center(boxes):
     depth = boxes[..., 5] - boxes[..., 2]
     
     return torch.stack([cx, cy, cz, width, height, depth], dim=-1)
+
+def center_to_corners(boxes):
+    """
+    Convert bounding boxes from center format to corner coordinates.
+    
+    Args:
+        boxes: Tensor of shape (..., 6) where last dim is (cx, cy, cz, width, height, depth)
+    
+    Returns:
+        Tensor of shape (..., 6) where last dim is (x_min, y_min, z_min, x_max, y_max, z_max)
+    """
+    # Extract center coordinates and dimensions
+    cx, cy, cz = boxes[..., 0], boxes[..., 1], boxes[..., 2]
+    width, height, depth = boxes[..., 3], boxes[..., 4], boxes[..., 5]
+    
+    # Calculate corner coordinates
+    x_min = cx - (width / 2)
+    y_min = cy - (height / 2)
+    z_min = cz - (depth / 2)
+    x_max = cx + (width / 2)
+    y_max = cy + (height / 2)
+    z_max = cz + (depth / 2)
+    
+    return torch.stack([x_min, y_min, z_min, x_max, y_max, z_max], dim=-1)
 
 def convert_model_to_gt_format(pred_boxes, normalize_coords=True):
     """

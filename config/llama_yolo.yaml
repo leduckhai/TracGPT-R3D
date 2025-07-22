@@ -3,18 +3,16 @@ tiny_llama:
     vision_tower_config: 
       vision_tower: vit3d
       img_size: [32, 256, 256]
-      patch_size: [4, 16, 16]
+      patch_size: [8, 64, 64]
       in_channels: 1
-      # hidden_size: 2560
-      # hidden_size: 512
-      hidden_size: 256
+      hidden_size: 768
       num_heads: 8
       vision_select_layer: -1
       vision_select_feature: cls_patch
 
     projector:
       image_size: [32, 256, 256]
-      patch_size: [4, 16, 16]
+      patch_size: [8, 64, 64]
       # in_dim: 2560
       out_channels: 256
       in_channels: 2048
@@ -31,7 +29,7 @@ tiny_llama:
       mm_projector_type: transpose
   
   bbox_predictor:
-    bbox_type: anchor
+    bbox_type: anchor_v2
     bbox_head:
       in_channels: 1
       input_dim: 2048
