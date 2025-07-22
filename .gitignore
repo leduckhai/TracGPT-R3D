@@ -17,3 +17,5 @@ output
 TracData
 eval_result
 wandb
+output
+MedYOLO
