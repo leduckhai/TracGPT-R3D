@@ -4,12 +4,14 @@ from eval import evaluate_single
 import numpy as np
 import wandb
 from transformers.cache_utils import DynamicCache
+from collections import defaultdict
 
 class TracTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.eval_predictions = []
+        self.eval_predictions = defaultdict(list)
         self.current_step = 0
+        self.gradient_log_freq = 10
     def log(self, logs, start_time=None):
         if hasattr(self, '_current_outputs') and self._current_outputs:
             for key, value in self._current_outputs.items():
@@ -21,52 +23,99 @@ class TracTrainer(Trainer):
         else:
             super().log(logs)
     
+    def log_gradient_histograms(self, model, step):
+        """Log gradient histograms to wandb"""
+        if wandb.run is None:
+            return
+            
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                wandb.log({
+                    f"grad_hist/{name}": wandb.Histogram(param.grad.cpu().numpy())
+                }, step=step)
+    
+    def log_gradient_norms(self, model, step):
+        """Log gradient norms and statistics"""
+        if wandb.run is None:
+            return
+            
+        total_norm = 0.0
+        param_count = 0
+        
+        gradient_logs = {}
+        
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                param_count += 1
+                
+                # Log individual layer gradient norms
+                gradient_logs[f"grad_norm/{name}"] = param_norm.item()
+                gradient_logs[f"grad_mean/{name}"] = param.grad.mean().item()
+                gradient_logs[f"grad_std/{name}"] = param.grad.std().item()
+                gradient_logs[f"grad_max/{name}"] = param.grad.max().item()
+                gradient_logs[f"grad_min/{name}"] = param.grad.min().item()
+        
+        # Log total gradient norm
+        total_norm = total_norm ** 0.5
+        gradient_logs["grad_norm/total"] = total_norm
+        gradient_logs["grad_norm/average"] = total_norm / max(param_count, 1)
+        
+        wandb.log(gradient_logs, step=step)
     
     def training_step(self, model, inputs, num_items_in_batch=None):
-       
-        with torch.no_grad():
-            outputs = model(**inputs)
-        self._current_outputs = outputs
-        loss = super().training_step(model, inputs, num_items_in_batch)        
-        if isinstance(outputs, dict) and "bbox_3d_loss" in outputs and wandb.run is not None:
-            wandb.log({
-                "train/bbox_3d_loss": outputs["bbox_3d_loss"].item(),
-                "step": self.state.global_step
-            })
+        (images,
+        input_ids,
+        attention_mask,
+        positive_centers,
+        labels,
+        center_bbox_gts,
+        bbox_mask,
+        position_ids,
+        answer_types,
+        questions,
+        answers,
+        corner_bbox_gts) = inputs.values()
+        
+        # Prepare filtered inputs for the parent training_step
+        filter_inputs = {
+            'input_ids': input_ids,
+            'images': images,
+            'bbox_gts': center_bbox_gts,
+            'bbox_masks': bbox_mask,
+            'labels': labels,
+            'attention_mask': attention_mask,
+            'position_ids': position_ids
+        }
+        
+        loss = super().training_step(model, filter_inputs, num_items_in_batch)
+        
+        if self.state.global_step % self.gradient_log_freq == 0:
+            self.log_gradient_norms(model, self.state.global_step)
+            
+            self.log_gradient_histograms(model, self.state.global_step)
+        
+        with torch.no_grad(): 
+            outputs = model(
+                images=images,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                bbox_gts=center_bbox_gts,
+                bbox_masks=bbox_mask,
+                labels=labels,
+                position_ids=position_ids
+            )
+            
+            if isinstance(outputs, dict) and wandb.run is not None and "aux_loss" in outputs:
+                aux_metrics = outputs["aux_loss"]
+                for metric_key, metric_value in aux_metrics.items():
+                    wandb.log({
+                        f"train/{metric_key}": metric_value,
+                        "step": self.state.global_step
+                    })
         
         return loss
-    def prediction_step(
-        self, model, inputs, prediction_loss_only=False, ignore_keys=None
-    ):
-        model.eval()
-        with torch.no_grad():
-            outputs = model(**inputs)
-            loss = outputs.loss
-
-            # Store real predictions for IoU computation
-            # if not prediction_loss_only:
-            bbox_preds = outputs["bbox_3d_pred"]
-            bbox_loss = outputs["bbox_3d_loss"]
-            bbox_labels = inputs["bbox_gts"]
-            bbox_masks = inputs["bbox_masks"]
-
-            # Store the real data
-            batch_data = {
-                "bbox_preds": bbox_preds,
-                "bbox_labels": bbox_labels,
-                "bbox_masks": bbox_masks,
-                "bbox_3d_loss": bbox_loss,
-            }
-            self.eval_predictions.append(batch_data)
-
-            # Return dummy tensors to satisfy HuggingFace
-            dummy_pred = torch.zeros(len(bbox_preds), 1)
-            dummy_label = torch.zeros(bbox_labels.shape[0], 1)
-
-            return (loss, dummy_pred, dummy_label)
-
-        # return (loss, None, None)
-
     def evaluation_loop(
         self,
         dataloader,
@@ -78,10 +127,13 @@ class TracTrainer(Trainer):
         """Override evaluation_loop to ensure our custom logic runs"""
         print(f"Starting custom evaluation loop with prefix: {metric_key_prefix}")
 
-        # Clear previous predictions
-        self.eval_predictions = []
+        # Initialize metrics storage
+        self.eval_metrics = {
+            'bbox_loss': [],
+            'aux_metrics': defaultdict(list)
+        }
 
-        # Call parent evaluation_loop
+        # Run parent evaluation
         eval_loop_output = super().evaluation_loop(
             dataloader,
             description,
@@ -90,65 +142,26 @@ class TracTrainer(Trainer):
             metric_key_prefix,
         )
 
-        print(f"Collected {len(self.eval_predictions)} prediction batches")
+        # Calculate and log metrics
+        metrics = {}
+        if self.eval_metrics['bbox_loss']:
+            metrics[f'{metric_key_prefix}/bbox_loss'] = np.mean(self.eval_metrics['bbox_loss'])
 
-        iou_score = self.compute_iou_from_stored_predictions()
-        bbox_losses = [batch["bbox_3d_loss"].item() for batch in self.eval_predictions]
-        mean_bbox_loss = np.mean(bbox_losses) if bbox_losses else float("nan")
+        # Process auxiliary metrics
+        for metric_key, values in self.eval_metrics['aux_metrics'].items():
+            metrics[f'{metric_key_prefix}/{metric_key}'] = np.mean(values)
 
-        # Log to wandb
+        # Log to wandb if available
         if wandb.run is not None:
-            wandb.log(
-                {
-                    f"{metric_key_prefix}/bbox_3d_loss": mean_bbox_loss,
-                    f"{metric_key_prefix}/iou": (
-                        iou_score if iou_score is not None else float("nan")
-                    ),
-                    "step": self.current_step,
-                }
-            )
+            wandb.log({
+                **metrics,
+                "step": self.state.global_step
+            })
 
-        eval_loop_output.metrics.update(
-            {
-                f"{metric_key_prefix}_bbox_3d_loss": mean_bbox_loss,
-                f"{metric_key_prefix}_iou": (
-                    iou_score if iou_score is not None else float("nan")
-                ),
-            }
-        )
+        eval_loop_output.metrics.update({
+            k.replace('/', '_'): v for k, v in metrics.items()
+        })
 
-        self.current_step += 1
+        self.state.global_step += 1
         return eval_loop_output
-
-    def compute_iou_from_stored_predictions(self):
-        """Compute IoU from stored variable-shape predictions"""
-        if len(self.eval_predictions) == 0:
-            print("No predictions stored for IoU computation")
-            return None
-
-        ious = []
-
-        for batch_idx, batch_data in enumerate(self.eval_predictions):
-            bbox_preds = batch_data["bbox_preds"]
-            bbox_labels = batch_data["bbox_labels"]
-            bbox_masks = batch_data["bbox_masks"]
-
-            for pred, label, mask in zip(bbox_preds, bbox_labels, bbox_masks):
-                
-                    pred, gt, iou = evaluate_single(pred, label, mask)
-                    if iou :
-                        print(f"Batch {batch_idx}: IoU = {iou}")
-                        # ious.extend(iou)
-                        if isinstance(iou, list):
-                            ious.extend(iou)
-                        else:
-                            ious.append(iou)
-              
-
-        if len(ious) == 0:
-            print("No valid IoU values computed")
-            return None
-
-        mean_iou = np.mean(ious)
-        print(f"Mean IoU: {mean_iou} (from {len(ious)} values)")
-        return float(mean_iou)
+    

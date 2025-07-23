@@ -44,7 +44,6 @@ class BBox3DPredictor(nn.Module):
         else:
             raise NotImplementedError
       
-        # self.loss_calculator = self._create_loss_calculator()
         self.enabled = True
 
     def predict_bboxes(

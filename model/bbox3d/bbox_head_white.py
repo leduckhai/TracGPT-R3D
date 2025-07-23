@@ -1,9 +1,6 @@
 import torch
 from torch import nn
 from typing import Optional
-import torch.nn.functional as F
-from types import SimpleNamespace
-from collections import OrderedDict, defaultdict
 import sys
 from dotenv import load_dotenv
 import os
@@ -13,14 +10,10 @@ load_dotenv()
 ROOT = os.getenv("ROOT")
 sys.path.append(ROOT)
 import torch
-from model.bbox3d.bbox_head import BBox3DHead,AnchorBBox3DHead,AnchorBBox3DHeadV2
-from model.bbox3d.helper import hungarian_iou_matching,convert_model_to_gt_format
-from model.bbox3d.helper import box3d_iou_single,iou_loss,diou_3d
 
 class AnchorBBox3DHeadV2(nn.Module):
     def __init__(self,config,num_anchors=3,patch_grid=[4,4,4],embed_dim=768,in_channels=64):
         super().__init__()
-        # in_channels= config.in_channels if isinstance(config, SimpleNamespace) else in_channels
         self.max_pred_per_patch=3
         self.num_anchors = num_anchors
         self.downsample = nn.Conv3d(in_channels, in_channels, kernel_size=2, stride=2)
@@ -45,19 +38,19 @@ class AnchorBBox3DHeadV2(nn.Module):
         B,all_patches,embed = x.shape[0],x.shape[1],x.shape[2]  # Batch size
         
         center_pred=torch.sigmoid(self.reducer(x)).squeeze(-1)   # [B, 64,1]
-        threshold = 0.5
+        threshold = 0.45
         # print()
+        # print("before",center_pred)
         center_pred = torch.where(
             center_pred > threshold,
             torch.ones_like(center_pred),  # Values > threshold → 1
             torch.zeros_like(center_pred)   # Values ≤ threshold → 0
         )
-        # print("bin shape",center_pred.shape)
-        print("unique value",torch.unique(center_pred))
+        # print("after",center_pred)
+        # print("unique value",torch.unique(center_pred))
         center_pred=center_pred.reshape(B,self.patch_grid[0],self.patch_grid[1],self.patch_grid[2])
         center_pred_bool=center_pred.bool()
-        # print("x shape",x.shape)
-        print("unique value",torch.unique(center_pred))
+        # print("unique value",torch.unique(center_pred))
 
         x_split=x.reshape(B,self.patch_grid[0],self.patch_grid[1],self.patch_grid[2],embed)
         x_head=self.bbox_reducer(x_split)
@@ -65,7 +58,6 @@ class AnchorBBox3DHeadV2(nn.Module):
         delta_xyz = torch.sigmoid(x_head[:, :,  :, :, :,:3]) * 2 - 0.5  # [2, 3, 3, 16, 32, 32]
         log_dwh = x_head[:, :,  :, :, :,3:6]  # [2, 3, 3, 16, 32, 32]
         conf = torch.sigmoid(x_head[:, :,  :, :, :,6])  # [2, 3, 16, 32, 32]
-        # print("x_head",x_head.shape)
         
         return center_pred_bool,delta_xyz,log_dwh,conf
     
@@ -96,13 +88,21 @@ class AnchorBBox3DLossV2(nn.Module):
         z_grid = torch.linspace(0.5/D, 1-0.5/D, D, device=device).view(1, D, 1, 1, 1)
         y_grid = torch.linspace(0.5/H, 1-0.5/H, H, device=device).view(1, 1, H, 1, 1)
         x_grid = torch.linspace(0.5/W, 1-0.5/W, W, device=device).view(1, 1, 1, W, 1)
+        """
+        Example: D = 4
+        Bins:
 
+        [0.0, 0.25], [0.25, 0.5], [0.5, 0.75], [0.75, 1.0].
+
+        Centers: [0.125, 0.375, 0.625, 0.875].
+
+        torch.linspace(0.5/4, 1-0.5/4, 4) → [0.125, 0.375, 0.625, 0.875]
+        """
         pos_target = torch.zeros_like(delta_zxy)
         size_target = torch.zeros_like(log_dwh)
         conf_target = torch.zeros_like(conf_pred)
 
         for b in range(B):
-            print("gt_boxes", gt_boxes.shape, masks.shape)
             gt = gt_boxes[b][masks[b]]  # (N_gt, 6)
             
             if len(gt) == 0:

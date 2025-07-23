@@ -19,7 +19,6 @@ import numpy as np
 import json
 from monai.transforms import Compose, ResizeD,EnsureChannelFirstD,SqueezeDimD
 from monai.transforms import ScaleIntensityRanged
-# from monai.transforms import NormalizeIntensityd, ScaleIntensityRanged
 
 from data_process.save_sample import process_sample
 class TracDataset(Dataset):
@@ -40,7 +39,6 @@ class TracDataset(Dataset):
                 #  AddChannelD(keys=["image"])
                 EnsureChannelFirstD(keys=["image"],channel_dim="no_channel"),
     
-    # Scale intensity
     ScaleIntensityRanged(
         keys=["image"],
         a_min=0,
@@ -135,8 +133,8 @@ def load_data(bbox_only=False):
     train_sample=1000
     val_sample=100
     test_sample=50
-    train_val_dir = "/root/VLMTrac/chunks/train/data"
-    image_path="/root/VLMTrac/2d_data/train/image"
+    train_val_dir = "/workspace/VLMTrac/chunks/train/data"
+    image_path="/workspace/VLMTrac/2d_data/train/image"
     data_paths = [os.path.join(train_val_dir, record) for record in os.listdir(train_val_dir)]
     train_paths, test_paths = train_test_split(
         data_paths, test_size=0.2, random_state=42

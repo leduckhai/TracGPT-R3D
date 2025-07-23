@@ -12,6 +12,7 @@ coord_bounds = {
     "z_min": 0,
     "z_max": 31,
 }
+import numpy as np
 
 def get_center(gt_boxes, patch_grid=[4,4,4]):
     positive_center = torch.zeros(patch_grid, dtype=torch.float32)
@@ -126,115 +127,8 @@ def convert_model_to_gt_format(pred_boxes, normalize_coords=True):
     
     
     return minmax_boxes
-    # Extract center and dimensions (non-inplace)
-    # centers = model_boxes[..., :3]  # [..., 3]
-    # dimensions = model_boxes[..., 3:]  # [..., 3]
+ 
 
-    # # Apply constraints safely
-    # if normalize_coords:
-    #     # Clamp centers and ensure positive dimensions
-    #     centers = torch.clamp(centers, 0.0, 1.0)
-    #     dimensions = torch.clamp(dimensions, min=1e-6)  # Avoid zero dimensions
-
-    # # Convert to min/max coordinates
-    # half_dims = dimensions / 2
-    # min_coords = centers - half_dims
-    # max_coords = centers + half_dims
-
-    # # Final clamping to ensure all values in [0,1] when normalized
-    # if normalize_coords:
-    #     min_coords = torch.clamp(min_coords, 0.0, 1.0)
-    #     max_coords = torch.clamp(max_coords, 0.0, 1.0)
-
-    # # Stack into GT format
-    # gt_boxes = torch.cat([min_coords, max_coords], dim=-1)
-
-    # return gt_boxes
-
-
-def compute_ious(
-    #
-    bbox_preds,
-    targets,
-    masks,
-):
-    """
-    Compute IoU matrix between predicted and ground truth 3D boxes
-    Args:
-        pred_boxes: [N, 6] in format [x_min, y_min, z_min, x_max, y_max, z_max]
-        gt_boxes:   [M, 6] in same format
-    Returns:
-        iou_matrix: [N, M] IoU values
-    """
-
-    pairs = defaultdict(list)
-    gt_boxes_minmax = targets[masks]
-    if len(gt_boxes_minmax) == 0:
-        return
-
-    matches = hungarian_iou_matching(bbox_preds, gt_boxes_minmax)
-    for pred_idx, gt_idx, iou in matches:
-        pred_box = bbox_preds[pred_idx]
-        gt_box = gt_boxes_minmax[gt_idx]
-        abs_iou = box3d_iou_single(pred_box, gt_box)
-    pairs["pred"].append(pred_box)
-    pairs["gt"].append(gt_box)
-    pairs["iou"].append(abs_iou)
-    return pairs
-
-
-def hungarian_iou_matching(pred_boxes, gt_boxes):
-    """
-    Matches predicted boxes to GT boxes using Hungarian algorithm based on IoU.
-
-    Args:
-        pred_boxes (Tensor): [N, 6] boxes in min-max format (x_min, y_min, z_min, x_max, y_max, z_max)
-        gt_boxes (Tensor): [M, 6] ground truth boxes in min-max format
-
-    Returns:
-        matches: List of (pred_idx, gt_idx, iou_score)
-    """
-    device = pred_boxes.device
-    N, M = pred_boxes.size(0), gt_boxes.size(0)
-    if N == 0 or M == 0:
-        return []
-
-    # Compute IoU matrix: [N, M]
-    iou_matrix = compute_3d_iou_matrix(pred_boxes, gt_boxes)  # assumed implemented
-    cost_matrix = (
-        1.0 - iou_matrix.detach().cpu().numpy()
-    )  # Cost = 1 - IoU (lower is better)
-
-    # Run Hungarian algorithm
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-
-    matches = []
-    for r, c in zip(row_ind, col_ind):
-        iou = iou_matrix[r, c].item()
-        matches.append((r, c, iou))
-
-    return matches
-
-
-def compute_3d_iou_matrix(pred_boxes, gt_boxes):
-    """
-    Compute IoU matrix between predicted and ground truth 3D boxes
-    Args:
-        pred_boxes: [N, 6] in format [x_min, y_min, z_min, x_max, y_max, z_max]
-        gt_boxes:   [M, 6] in same format
-    Returns:
-        iou_matrix: [N, M] IoU values
-    """
-    N = pred_boxes.size(0)
-    M = gt_boxes.size(0)
-
-    iou_matrix = torch.zeros(N, M, device=pred_boxes.device)
-
-    for i in range(N):
-        for j in range(M):
-            iou_matrix[i, j] = box3d_iou_single(pred_boxes[i], gt_boxes[j])
-
-    return iou_matrix
 
 def iou_loss(bbox1,bbox2,denormalize=False):
     return 1-box3d_iou_single(bbox1,bbox2,denormalize=denormalize)
@@ -400,6 +294,109 @@ def diou_3d(pred_boxes, gt_boxes):
     
     # Loss = 1 - DIoU
     return 1 - diou.mean()  # Scalar
+
+
+def center_to_minmax(boxes: torch.Tensor) -> torch.Tensor:
+    """
+    Convert boxes from [xc, yc, zc, w, h, d] to [x_min, y_min, z_min, x_max, y_max, z_max].
+
+    Args:
+        boxes: (N, 6) tensor
+
+    Returns:
+        (N, 6) tensor in minmax format
+    """
+    centers = boxes[:, :3]
+    half_sizes = boxes[:, 3:] / 2
+    min_corner = centers - half_sizes
+    max_corner = centers + half_sizes
+    return torch.cat([min_corner, max_corner], dim=1)
+
+def compute_3d_iou_matrix(pred_boxes: torch.Tensor, gt_boxes: torch.Tensor) -> torch.Tensor:
+    """
+    Compute pairwise IoU between predicted and ground-truth 3D boxes.
+
+    Args:
+        pred_boxes: (N, 6) in minmax format
+        gt_boxes: (M, 6) in minmax format
+
+    Returns:
+        iou_matrix: (N, M) IoU scores
+    """
+    N, M = pred_boxes.size(0), gt_boxes.size(0)
+
+    # Intersection box
+    max_min = torch.max(pred_boxes[:, None, :3], gt_boxes[None, :, :3])  # (N, M, 3)
+    min_max = torch.min(pred_boxes[:, None, 3:], gt_boxes[None, :, 3:])  # (N, M, 3)
+
+    inter = (min_max - max_min).clamp(min=0)  # (N, M, 3)
+    inter_vol = inter[:, :, 0] * inter[:, :, 1] * inter[:, :, 2]
+
+    vol_a = torch.prod(pred_boxes[:, 3:] - pred_boxes[:, :3], dim=1).unsqueeze(1)  # (N, 1)
+    vol_b = torch.prod(gt_boxes[:, 3:] - gt_boxes[:, :3], dim=1).unsqueeze(0)      # (1, M)
+
+    union_vol = vol_a + vol_b - inter_vol
+    iou = inter_vol / union_vol.clamp(min=1e-8)  # avoid divide by zero
+    return iou
+
+def hungarian_iou_matching(pred_boxes: torch.Tensor, gt_boxes: torch.Tensor):
+    """
+    Match predicted and ground truth boxes using Hungarian algorithm on IoU.
+
+    Args:
+        pred_boxes: (N, 6) minmax
+        gt_boxes: (M, 6) minmax
+
+    Returns:
+        matches: List of (pred_idx, gt_idx, iou)
+    """
+    N, M = pred_boxes.size(0), gt_boxes.size(0)
+    if N == 0 or M == 0:
+        return []
+
+    iou_matrix = compute_3d_iou_matrix(pred_boxes, gt_boxes)  # (N, M)
+    cost_matrix = (1.0 - iou_matrix).cpu().numpy()
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    matches = [(int(r), int(c), float(iou_matrix[r, c].item())) for r, c in zip(row_ind, col_ind)]
+    return matches
+
+def compute_ious(bbox_preds, targets, masks, mode="minmax"):
+    """
+    Compute IoU matches between predicted and ground truth boxes using Hungarian algorithm.
+
+    Args:
+        bbox_preds: (N, 6) predicted boxes
+        targets: (M, 6) ground truth boxes
+        masks: (M,) boolean tensor mask
+        mode: 'minmax' or 'center'
+
+    Returns:
+        pairs: dict with 'pred', 'gt', and 'iou' keys
+    """
+    pairs = defaultdict(list)
+
+    gt_boxes = targets[masks]
+    if gt_boxes.size(0) == 0 or bbox_preds.size(0) == 0:
+        return pairs
+
+    if mode == "center":
+        bbox_preds = center_to_minmax(bbox_preds)
+        gt_boxes = center_to_minmax(gt_boxes)
+
+    matches = hungarian_iou_matching(bbox_preds, gt_boxes)
+
+    for pred_idx, gt_idx, iou in matches:
+        pairs["pred"].append(bbox_preds[pred_idx])
+        pairs["gt"].append(gt_boxes[gt_idx])
+        pairs["iou"].append(iou)
+
+    # Convert lists of tensors to one stacked tensor (optional)
+    if pairs["pred"]:
+        pairs["pred"] = torch.stack(pairs["pred"])
+        pairs["gt"] = torch.stack(pairs["gt"])
+        pairs["iou"] = torch.tensor(pairs["iou"], dtype=torch.float32, device=bbox_preds.device)
+
+    return pairs
 
 
 if __name__ == "__main__":

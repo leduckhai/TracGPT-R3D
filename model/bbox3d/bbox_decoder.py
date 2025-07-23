@@ -31,7 +31,7 @@ class BBox3DDecoder:
         Returns:
             list: List of dictionaries containing the decoded bounding boxes and scores for each batch
         """
-        print("center_pred", center_pred.shape, "delta_zxy", delta_xyz.shape, "log_dwh", log_dwh.shape, "conf_pred", conf_pred.shape)
+        # print("center_pred", center_pred.shape, "delta_zxy", delta_xyz.shape, "log_dwh", log_dwh.shape, "conf_pred", conf_pred.shape)
         batch_preds = []
         D, H, W = 4, 4, 4  # Spatial dimensions
         B, p_x, p_y, p_z, n_pred, _ = delta_xyz.shape  # [B,4,4,4,5,3]
@@ -39,15 +39,12 @@ class BBox3DDecoder:
 
         center_pred = center_pred.to(device)  # Shape: [4,4,4]
 
-        # z_centers = torch.linspace(0, 1, D, device=device).view(1, 1,  D, 1, 1).expand(B, -1, D, H, W, n_pred, -1)  # [1,1,1,4,1,1]
-        # y_centers = torch.linspace(0, 1, H, device=device).view(1, 1,  1, H, 1).expand(B, -1, D, H, W, n_pred, -1)  # [1,1,1,1,4,1]
-        # x_centers = torch.linspace(0, 1, W, device=device).view(1, 1,  1, 1, W).expand(B, -1, D, H, W, n_pred, -1)  # [1,1,1,1,1,4]
         z_centers = torch.linspace(0, 1, D, device=device).view(1, 1, 1, D, 1).expand(B, H, W, D, n_pred)
         y_centers = torch.linspace(0, 1, H, device=device).view(1, H, 1, 1, 1).expand(B, H, W, D, n_pred)
         x_centers = torch.linspace(0, 1, W, device=device).view(1, 1, W, 1, 1).expand(B, H, W, D, n_pred)
 
         #  grid + offset
-        print("x center shape",x_centers.shape,  delta_xyz[..., 0].shape)
+        # print("x center shape",x_centers.shape,  delta_xyz[..., 0].shape)
         pred_cx = x_centers + delta_xyz[..., 0]  # [B,4,4,4,5]
         pred_cy = y_centers + delta_xyz[..., 1]  # [B,4,4,4,5]
         pred_cz = z_centers + delta_xyz[..., 2]  # [B,4,4,4,5]
@@ -61,15 +58,16 @@ class BBox3DDecoder:
         pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=-1)  # [B,4,4,4,5,6]
 
         pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=-1)  # [B,4,4,4,5,6]
-        print("pred_boxes",pred_boxes.shape)
+        # print("pred_boxes",pred_boxes.shape)
         batch_results = []
         for b in range(B):
             boxes_flat = pred_boxes[b].reshape(-1, 6)  # [4*4*4*5, 6]
             conf_flat = conf_pred[b].flatten()         # [4*4*4*5]
-            print("boxes_flat",boxes_flat.shape,"conf_flat",conf_flat.shape)
+            # print("boxes_flat",boxes_flat.shape,"conf_flat",conf_flat.shape)
+            # print("center_pred",center_pred[b])
+            # print("conf")
             center_mask = center_pred[b].unsqueeze(-1).expand(-1, -1, -1, n_pred).reshape(-1)  # [4*4*4*5]
-            print("center_mask",center_mask)
-            center_mask = center_mask[center_mask>0.0].bool()
+            # print("center_mask",center_mask)
             combined_mask = (conf_flat > self.conf_threshold) & center_mask  # [4*4*4*5]
 
             if not combined_mask.any():

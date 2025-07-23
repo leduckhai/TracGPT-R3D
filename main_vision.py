@@ -15,7 +15,8 @@ from trainer import TracTrainer
 import wandb
 import numpy as np
 from datetime import datetime
-
+from model.LanguageModel.Vision_white import TracVisionModel, TracVisionConfig
+from vision_trainer import TracVisionTrainer
 now = datetime.now()
 
 # Format as D-M-Y--H-M-S
@@ -176,77 +177,7 @@ def create_training_args():
     args.split_batches = False
     args.include_tokens_per_second = False
     args.should_save = True
-
     return args
-
-
-def maybe_zero_3(param, ignore_status=False, name=None):
-    """Handle DeepSpeed zero optimization"""
-    try:
-        from deepspeed import zero
-        from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
-
-        if hasattr(param, "ds_id"):
-            if param.ds_status == ZeroParamStatus.NOT_AVAILABLE:
-                if not ignore_status:
-                    logging.warning(
-                        f"{name}: param.ds_status != ZeroParamStatus.NOT_AVAILABLE: {param.ds_status}"
-                    )
-            with zero.GatheredParameters([param]):
-                param = param.data.detach().cpu().clone()
-        else:
-            param = param.detach().cpu().clone()
-    except ImportError:
-        param = param.detach().cpu().clone()
-    return param
-
-
-def get_mm_projector_state_maybe_zero_3(named_params, keys_to_match):
-    """Get projector state with optional DeepSpeed handling"""
-    to_return = {
-        k: t
-        for k, t in named_params
-        if any(key_match in k for key_match in keys_to_match)
-    }
-    to_return = {
-        k: maybe_zero_3(v, ignore_status=True).cpu() for k, v in to_return.items()
-    }
-    return to_return
-
-
-def safe_save_model_for_hf_trainer(trainer, output_dir: str):
-    """Save model safely"""
-    os.makedirs(output_dir, exist_ok=True)
-
-    if getattr(trainer.args, "tune_mm_mlp_adapter", False):
-        # Only save projector and embed_tokens in pretrain
-        keys_to_match = ["mm_projector", "embed_tokens"]
-        weight_to_save = get_mm_projector_state_maybe_zero_3(
-            trainer.model.named_parameters(), keys_to_match
-        )
-        trainer.model.config.save_pretrained(output_dir)
-
-        current_folder = output_dir.split("/")[-1]
-        parent_folder = os.path.dirname(output_dir)
-
-        if current_folder.startswith("checkpoint-"):
-            mm_projector_folder = os.path.join(parent_folder, "mm_projector")
-            os.makedirs(mm_projector_folder, exist_ok=True)
-            torch.save(
-                weight_to_save,
-                os.path.join(mm_projector_folder, f"{current_folder}.bin"),
-            )
-        else:
-            torch.save(weight_to_save, os.path.join(output_dir, f"mm_projector.bin"))
-        return
-
-    state_dict = trainer.model.state_dict()
-    cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
-    del state_dict
-
-    trainer.model.save_pretrained(output_dir, state_dict=cpu_state_dict)
-    if hasattr(trainer, "tokenizer") and trainer.tokenizer is not None:
-        trainer.tokenizer.save_pretrained(output_dir)
 
 
 def find_all_linear_names(model):
@@ -270,6 +201,16 @@ def find_all_linear_names(model):
             lora_module_names.add(name)
     return list(lora_module_names)
 
+def print_trainable_params(model):
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total trainable params: {trainable_params}")
+    print("Trainable layers:")
+    for name, param in model.named_parameters():
+        if param.requires_grad: 
+            print(f"\t{name}")
+    return trainable_params  # Return the count for potential further use
+
+# Usage
 
 def parse_arguments():
     """Enhanced argument parser with all new parameters"""
@@ -407,22 +348,6 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def compute_metrics(eval_pred):
-    preds = eval_pred.predictions  # shape: [B, D, H, W]
-    labels = eval_pred.label_ids  # shape: [B, D, H, W]
-    bbox_preds = preds["bbox_preds"]  # shape: [B, D, H, W]
-    bbox_labels = labels["bbox_labels"]  # shape: [B, D, H, W]
-    bbox_preds = preds["mask_labels"]  # shape: [B, D, H, W]
-    # dice = dice_score(preds, labels)
-    ious = []
-    for pred, label in zip(bbox_preds, bbox_labels):
-        # iou = compute_ious(pred, label)
-        pred, gt, iou = evaluate_single(pred, label)
-        if len(iou) > 0:
-            print("sample iou compute metric", iou)
-            ious.extend(iou)
-    return {"iou": np.mean(ious)}
-
 class NaNDetectionCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs):
         # Check model parameters for NaN
@@ -501,7 +426,12 @@ def main():
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))
-
+    # train_loader = DataLoader(
+    #     train_set,
+    #     batch_size=training_args.per_device_test_batch_size,
+    #     collate_fn=collator,
+    #     pin_memory=cmd_args.dataloader_pin_memory,
+    # )
     test_loader = DataLoader(
         test_set,
         batch_size=training_args.per_device_test_batch_size,
@@ -511,13 +441,10 @@ def main():
 
     img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
     config = TracLlamaConfig(vocab_size=len(tokenizer), img_token_id=img_token_id)
-
-    if cmd_args.model_name_or_path == "TinyLlama/TinyLlama-1.1B-Chat-v1.0":
-
-        model = TracLlamaForCausalLM(config)
-    else:
-        raise NotImplementedError
-
+    
+    model=TracVisionModel()
+    print("trainable params", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    print("Layer grad",print_trainable_params(model))
     wandb.watch(
         model,
         log="all",       # Logs gradients + parameters
@@ -526,20 +453,18 @@ def main():
     )
 
     if cmd_args.freeze_backbone:
-    # if True:
         print_info("Freezing backbone...")
         model.model.requires_grad_(False)
 
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
-    # LoRA setup
-    if training_args.lora_enable:
-        set_up_lora(model, training_args)
+    # if training_args.lora_enable:
+    #     set_up_lora(model, training_args)
 
-    model.all_to_device(training_args.device)
-    print("output dir", training_args.output_dir)
-    trainer = TracTrainer(
+    model.to(training_args.device)
+               
+    trainer = TracVisionTrainer(
         model=model,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
@@ -570,7 +495,7 @@ def main():
             load_best_model_at_end=training_args.load_best_model_at_end,
             report_to=["wandb"],
             remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
-            seed=training_args.seed,  # Added seed
+            seed=training_args.seed,  
             save_safetensors=False,
             dataloader_pin_memory=False,
         ),
@@ -578,9 +503,6 @@ def main():
         eval_dataset=val_set,
         tokenizer=tokenizer,
         data_collator=collator,
-         callbacks=[NaNDetectionCallback()]
-        # compute_metrics=compute_metrics,
-        # preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
     torch.autograd.set_detect_anomaly(True, check_nan=True)
     trainer.train()
@@ -597,7 +519,6 @@ def main():
         save_path="generate_output",
     )
     # Save the final model
-    safe_save_model_for_hf_trainer(trainer, training_args.output_dir)
     print_info(f"Model saved to {training_args.output_dir}")
 
 

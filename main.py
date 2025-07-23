@@ -1,239 +1,268 @@
 import os
 import logging
-from typing import Optional, List, Dict
-import numpy as np
+import argparse
 import torch
-import torch.distributed as dist
-import transformers
-from transformers import AutoTokenizer, LlamaForCausalLM
-from dataclasses import dataclass, field
+import torch.nn.functional as F
+from transformers import AutoTokenizer
+from collator import BboxAwareCollator
+from torch.utils.data import DataLoader
+from transformers import TrainerCallback
+from data.dataloader import load_data
+from transformers import TrainingArguments
+from model.LanguageModel.Trac_llama import TracLlamaForCausalLM, TracLlamaConfig
+from eval import evaluate, evaluate_single
+from trainer import TracTrainer
+import wandb
+import numpy as np
+from datetime import datetime
 
-def setup_distributed():
-    """Initialize distributed training environment"""
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ['WORLD_SIZE'])
-        local_rank = int(os.environ['LOCAL_RANK'])
-    else:
-        print('Not using distributed mode')
-        return -1, 1, -1
+now = datetime.now()
 
-    torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend='nccl', init_method='env://')
-    dist.barrier()
-    
-    return rank, world_size, local_rank
+# Format as D-M-Y--H-M-S
+date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
+wandb.init(
+    project="TracGPT",
+    name=f"Trac_llama-{date_time_string}",
+)
+# Disable distributed training detection
+os.environ["RANK"] = "-1"
+os.environ["LOCAL_RANK"] = "-1"
+os.environ["WORLD_SIZE"] = "1"
 
-def cleanup_distributed():
-    """Clean up distributed training"""
-    if dist.is_initialized():
-        dist.destroy_process_group()
 
-def is_main_process(rank):
-    """Check if current process is the main process"""
-    return rank in [-1, 0]
+def print_info(*args):
+    """Simple print function"""
+    print(*args)
 
-def rank0_print(*args):
-    """Print only from rank 0 process"""
-    if is_main_process(int(os.environ.get('RANK', -1))):
-        print(*args)
 
-@dataclass
-class ModelArguments:
-    version: Optional[str] = field(default="v0")
-    model_name_or_path: Optional[str] = field(default="microsoft/Phi-3-mini-4k-instruct", metadata={"help": "Path to the LLM or MLLM."})
-    model_type: Optional[str] = field(default=None, metadata={"help": "llama2, phi3"})
-
-    freeze_backbone: bool = field(default=False)
-    pretrain_mllm: Optional[str] = field(default=None)
-
-    tune_mm_mlp_adapter: bool = field(default=False, metadata={"help": "Used in pretrain: tune mm_projector and embed_tokens"})
-    pretrain_mm_mlp_adapter: Optional[str] = field(default=None, metadata={"help": "Path to pretrained mm_projector and embed_tokens."})
-
-    # image
-    image_channel: int = field(default=1)
-    image_size: tuple = field(default=(32, 256, 256))
-    patch_size: tuple = field(default=(4, 16, 16))
-
-    # vision
-    vision_tower: Optional[str] = field(default="vit3d")
-    vision_select_layer: Optional[int] = field(default=-1)
-    vision_select_feature: Optional[str] = field(default="patch")
-    pretrain_vision_model: str = field(default=None, metadata={"help": "Path to pretrained model for ViT."})
-    freeze_vision_tower: bool = field(default=False)
-
-    # projector
-    mm_projector_type: Optional[str] = field(default='spp', metadata={"help": "spp"})
-    proj_layer_type: str = field(default="mlp", metadata={"help": "Type of layer in projector. options: [linear, mlp]."})
-    proj_layer_num: int = field(default=2, metadata={"help": "Number of layers in projector."})
-    proj_pooling_type: str = field(default="spatial", metadata={"help": "Type of pooling in projector. options: [spatial, sequence]."})
-    proj_pooling_size: int = field(default=2, metadata={"help": "Size of pooling in projector."})
-
-    # segvol
-    segmentation_module: str = field(default=None, metadata={"help": "segvol"})
-    pretrain_seg_module: str = field(default=None, metadata={"help": "Pretrained segvol model."})
-
-@dataclass
-class DataArguments:
-    data_root: str = field(default="./Data/data/", metadata={"help": "Root directory for all data."})
+def create_data_args():
+    """Create data arguments namespace"""
+    args = argparse.Namespace()
+    args.data_root = "./Data/data/"
 
     # caption data
-    cap_data_path: str = field(default="./Data/data/M3D_Cap_npy/M3D_Cap.json", metadata={"help": "Path to caption data."})
+    args.cap_data_path = "./Data/data/M3D_Cap_npy/M3D_Cap.json"
 
     # VQA data
-    vqa_data_train_path: str = field(default="./Data/data/M3D-VQA/M3D_VQA_train.csv", metadata={"help": "Path to training VQA data."})
-    vqa_data_val_path: str = field(default="./Data/data/M3D-VQA/M3D_VQA_val.csv", metadata={"help": "Path to validation VQA data."})
-    vqa_data_test_path: str = field(default="./Data/data/M3D-VQA/M3D_VQA_test.csv", metadata={"help": "Path to testing VQA data."})
-
-    vqa_yn_data_train_path: str = field(default="./Data/data/M3D-VQA/M3D_VQA_yn_train.csv", metadata={"help": "Path to training VQA Yes or No data."})
+    args.vqa_data_train_path = "./Data/data/M3D-VQA/M3D_VQA_train.csv"
+    args.vqa_data_val_path = "./Data/data/M3D-VQA/M3D_VQA_val.csv"
+    args.vqa_data_test_path = "./Data/data/M3D-VQA/M3D_VQA_test.csv"
+    args.vqa_yn_data_train_path = "./Data/data/M3D-VQA/M3D_VQA_yn_train.csv"
 
     # positioning & segmentation data
-    seg_data_path: str = field(default="./Data/data/M3D_Seg_npy/", metadata={"help": "Path to segmentation data."})
-    refseg_data_train_path: str = field(default="./Data/data/M3D_RefSeg_npy/M3D_RefSeg.csv", metadata={"help": "Path to refering segmentation data."})
-    refseg_data_test_path: str = field(default="./Data/data/M3D_RefSeg_npy/M3D_RefSeg_test.csv", metadata={"help": "Path to refering segmentation data."})
+    args.seg_data_path = "./Data/data/M3D_Seg_npy/"
+    args.refseg_data_train_path = "./Data/data/M3D_RefSeg_npy/M3D_RefSeg.csv"
+    args.refseg_data_test_path = "./Data/data/M3D_RefSeg_npy/M3D_RefSeg_test.csv"
 
-@dataclass
-class TrainingArguments(transformers.TrainingArguments):
-    # lora
-    lora_enable: bool = False
-    lora_r: int = 16
-    lora_alpha: int = 32
-    lora_dropout: float = 0.05
-    lora_weight_path: str = ""
-    lora_bias: str = "none"
+    return args
 
-    cache_dir: Optional[str] = field(default=None)
-    remove_unused_columns: bool = field(default=False)
-    model_max_length: int = field(
-        default=512,
-        metadata={
-            "help":
-            "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
-        },
+
+def set_up_lora(model, training_args):
+    print_info("Setting up LoRA...")
+    from peft import LoraConfig, get_peft_model, TaskType
+    lora_module_names = find_all_linear_names(model)
+    # print(f"LoRA target modules: {lora_module_names}")
+
+    # Configure LoRA
+    lora_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=lora_module_names,
+        lora_dropout=0.05,
+        bias="lora_only",
+        task_type=TaskType.CAUSAL_LM,
+        modules_to_save=["embed_tokens", "lm_head"]
     )
-    seed: int = 42
+
+    # Apply LoRA
+    model = get_peft_model(model, lora_config)
+
+    # Verify parameters
+    trainable_params, all_params = model.get_nb_trainable_parameters()
+    print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
+        
     
-    # Distributed training settings
-    ddp_backend: str = "nccl"
-    ddp_timeout: int = 18000  # Increased timeout for stability
-    ddp_find_unused_parameters: bool = False
-    ddp_bucket_cap_mb: int = 25  # Optimize DDP communication
-    
-    optim: str = field(default="adamw_torch")
+def create_training_args():
+    """Create training arguments namespace"""
+    args = argparse.Namespace()
 
-    # Training configuration
-    bf16: bool = True
-    output_dir: str = "./LaMed/output/LaMed-pretrain-distributed"
-    num_train_epochs: float = 1
-    per_device_train_batch_size: int = 1
-    per_device_eval_batch_size: int = 1
-    gradient_accumulation_steps: int = 1
-    evaluation_strategy: str = "steps"
-    eval_accumulation_steps: int = 1
-    eval_steps: float = 0.04
-    save_strategy: str = "steps"
-    save_steps: int = 2000
-    save_total_limit: int = 2
-    learning_rate: float = 1e-4
-    weight_decay: float = 0.
-    warmup_ratio: float = 0.03
-    lr_scheduler_type: str = "cosine"
-    logging_steps: float = 10
-    gradient_checkpointing: bool = False
-    dataloader_pin_memory: bool = True
-    dataloader_num_workers: int = 4  # Increased for distributed training
-    report_to: str = "tensorboard"
-    
-    # Enable distributed training
-    local_rank: int = field(default=-1)
-    
-    def __post_init__(self):
-        # Don't override environment variables if they're already set
-        if self.local_rank == -1 and 'LOCAL_RANK' in os.environ:
-            self.local_rank = int(os.environ['LOCAL_RANK'])
-        super().__post_init__()
+    # lora
+    args.lora_enable = True
+    args.lora_r = 16
+    args.lora_alpha = 32
+    args.lora_dropout = 0.05
+    args.lora_weight_path = ""
+    args.lora_bias = "none"
 
-def compute_metrics(eval_preds):
-    labels_ids = eval_preds.label_ids
-    pred_ids = eval_preds.predictions
+    args.cache_dir = None
+    args.remove_unused_columns = False
+    args.model_max_length = 512
+    args.seed = 42
+    args.optim = "adamw_torch"
 
-    labels = labels_ids[:, 1:]
-    preds = pred_ids[:, :-1]
+    args.bf16 = False
+    args.fp16 = True
+    args.output_dir = "./output/Tinyllama-finetune-0000/"
+    args.num_train_epochs = 3
+    args.per_device_train_batch_size = 8
+    args.per_device_eval_batch_size = 4
+    args.per_device_test_batch_size = 1
+    args.gradient_accumulation_steps = 1
+    args.evaluation_strategy = "steps"
+    args.eval_accumulation_steps = 1
+    args.eval_steps = 40
+    args.save_strategy = "steps"
+    args.save_steps = 1000
+    args.save_total_limit = 1
+    args.learning_rate = 5e-5
+    args.weight_decay = 0.0
+    args.warmup_ratio = 0.03
+    args.lr_scheduler_type = "cosine"
+    args.logging_steps = 8
+    args.gradient_checkpointing = False
+    args.dataloader_pin_memory = True
+    args.dataloader_num_workers = 8
+    args.report_to = "tensorboard"
 
-    labels_flatten = labels.reshape(-1)
-    preds_flatten = preds.reshape(-1)
-    valid_indices = np.where(labels_flatten != -100)
-    filtered_preds = preds_flatten[valid_indices]
-    filtered_labels = labels_flatten[valid_indices]
-    acc_score = sum(filtered_preds==filtered_labels) / len(filtered_labels)
+    args.local_rank = -1
+    args.world_size = 1
+    args.process_index = 0
+    args.n_gpu = 1 if torch.cuda.is_available() else 0
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    return {"accuracy": acc_score}
+    args.do_train = True
+    args.do_eval = True
+    args.do_predict = False
+    args.overwrite_output_dir = True
+    args.load_best_model_at_end = False
+    args.metric_for_best_model = None
+    args.greater_is_better = None
+    args.ignore_data_skip = False
+    args.save_safetensors = True
+    args.save_on_each_node = False
+    args.save_only_model = False
+    args.no_cuda = False
+    args.use_legacy_prediction_loop = False
+    args.prediction_loss_only = False
+    args.run_name = None
+    args.logging_dir = None
+    args.logging_strategy = "steps"
+    args.logging_first_step = False
+    args.logging_nan_inf_filter = True
+    args.include_inputs_for_metrics = False
+    args.label_smoothing_factor = 0.0
+    args.debug = []
+    args.sharded_ddp = []
+    args.fsdp = []
+    args.fsdp_config = {}
+    args.deepspeed = None
+    args.label_names = None
+    args.resume_from_checkpoint = None
+    args.hub_model_id = None
+    args.hub_strategy = "every_save"
+    args.hub_token = None
+    args.hub_private_repo = False
+    args.hub_always_push = False
+    args.gradient_checkpointing_kwargs = None
+    args.include_num_input_tokens_seen = False
+    args.neftune_noise_alpha = None
+    args.optim_args = None
+    args.ray_scope = "last"
+    args.ddp_timeout = 1800
+    args.torch_compile = False
+    args.torch_compile_backend = None
+    args.torch_compile_mode = None
+    args.dispatch_batches = None
+    args.split_batches = False
+    args.include_tokens_per_second = False
+    args.should_save = True
 
-def preprocess_logits_for_metrics(logits, labels):
-    pred_ids = torch.argmax(logits, dim=-1)
-    return pred_ids
+    return args
+
 
 def maybe_zero_3(param, ignore_status=False, name=None):
-    from deepspeed import zero
-    from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
-    if hasattr(param, "ds_id"):
-        if param.ds_status == ZeroParamStatus.NOT_AVAILABLE:
-            if not ignore_status:
-                logging.warning(f"{name}: param.ds_status != ZeroParamStatus.NOT_AVAILABLE: {param.ds_status}")
-        with zero.GatheredParameters([param]):
-            param = param.data.detach().cpu().clone()
-    else:
+    """Handle DeepSpeed zero optimization"""
+    try:
+        from deepspeed import zero
+        from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
+
+        if hasattr(param, "ds_id"):
+            if param.ds_status == ZeroParamStatus.NOT_AVAILABLE:
+                if not ignore_status:
+                    logging.warning(
+                        f"{name}: param.ds_status != ZeroParamStatus.NOT_AVAILABLE: {param.ds_status}"
+                    )
+            with zero.GatheredParameters([param]):
+                param = param.data.detach().cpu().clone()
+        else:
+            param = param.detach().cpu().clone()
+    except ImportError:
         param = param.detach().cpu().clone()
     return param
 
+
 def get_mm_projector_state_maybe_zero_3(named_params, keys_to_match):
-    to_return = {k: t for k, t in named_params if any(key_match in k for key_match in keys_to_match)}
-    to_return = {k: maybe_zero_3(v, ignore_status=True).cpu() for k, v in to_return.items()}
+    """Get projector state with optional DeepSpeed handling"""
+    to_return = {
+        k: t
+        for k, t in named_params
+        if any(key_match in k for key_match in keys_to_match)
+    }
+    to_return = {
+        k: maybe_zero_3(v, ignore_status=True).cpu() for k, v in to_return.items()
+    }
     return to_return
 
-def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
-                                   output_dir: str):
-    """Collects the state dict and dump to disk."""
+
+def safe_save_model_for_hf_trainer(trainer, output_dir: str):
+    """Save model safely"""
+    os.makedirs(output_dir, exist_ok=True)
 
     if getattr(trainer.args, "tune_mm_mlp_adapter", False):
         # Only save projector and embed_tokens in pretrain
-        keys_to_match = ['mm_projector', 'embed_tokens']
-
-        weight_to_save = get_mm_projector_state_maybe_zero_3(trainer.model.named_parameters(), keys_to_match)
+        keys_to_match = ["mm_projector", "embed_tokens"]
+        weight_to_save = get_mm_projector_state_maybe_zero_3(
+            trainer.model.named_parameters(), keys_to_match
+        )
         trainer.model.config.save_pretrained(output_dir)
 
-        current_folder = output_dir.split('/')[-1]
+        current_folder = output_dir.split("/")[-1]
         parent_folder = os.path.dirname(output_dir)
-        
-        # Only save from main process
-        if is_main_process(trainer.args.local_rank):
-            if current_folder.startswith('checkpoint-'):
-                mm_projector_folder = os.path.join(parent_folder, "mm_projector")
-                os.makedirs(mm_projector_folder, exist_ok=True)
-                torch.save(weight_to_save, os.path.join(mm_projector_folder, f'{current_folder}.bin'))
-            else:
-                torch.save(weight_to_save, os.path.join(output_dir, f'mm_projector.bin'))
-        return
 
-    if trainer.deepspeed:
-        torch.cuda.synchronize()
-        trainer.save_model(output_dir)
+        if current_folder.startswith("checkpoint-"):
+            mm_projector_folder = os.path.join(parent_folder, "mm_projector")
+            os.makedirs(mm_projector_folder, exist_ok=True)
+            torch.save(
+                weight_to_save,
+                os.path.join(mm_projector_folder, f"{current_folder}.bin"),
+            )
+        else:
+            torch.save(weight_to_save, os.path.join(output_dir, f"mm_projector.bin"))
         return
 
     state_dict = trainer.model.state_dict()
-    if trainer.args.should_save:
-        cpu_state_dict = {
-            key: value.cpu()
-            for key, value in state_dict.items()
-        }
-        del state_dict
-        trainer._save(output_dir, state_dict=cpu_state_dict)
+    cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
+    del state_dict
+
+    trainer.model.save_pretrained(output_dir, state_dict=cpu_state_dict)
+    if hasattr(trainer, "tokenizer") and trainer.tokenizer is not None:
+        trainer.tokenizer.save_pretrained(output_dir)
+
 
 def find_all_linear_names(model):
+    """Find all linear layer names for LoRA"""
     cls = torch.nn.Linear
     lora_module_names = set()
-    # Process of elimination: LoRA only targets on LLM backbone
-    ignore_keywords = ['vision_tower', 'mm_projector', 'embed_tokens', 'lm_head', 'seg_projector', 'seg_module']
+    ignore_keywords = [
+        "vision_tower",
+        "mm_projector",
+        "embed_tokens",
+        "lm_head",
+        "seg_projector",
+        "seg_module",
+        "bbox3d_head",
+        "bbox3d_projector",
+    ]
     for name, module in model.named_modules():
         if any(mm_keyword in name for mm_keyword in ignore_keywords):
             continue
@@ -241,163 +270,323 @@ def find_all_linear_names(model):
             lora_module_names.add(name)
     return list(lora_module_names)
 
-@dataclass
-class DataCollator:
-    def __init__(self, seg_enable):
-        self.seg_enable = seg_enable
-        
-    def __call__(self, batch: list) -> dict:
-        if self.seg_enable:
-            images, input_ids, labels, attention_mask, segs = tuple(
-                [b[key] for b in batch] for key in ('image', 'input_id', 'label', 'attention_mask', 'seg'))
 
-            images = torch.cat([_.unsqueeze(0) for _ in images], dim=0)
-            input_ids = torch.cat([_.unsqueeze(0) for _ in input_ids], dim=0)
-            labels = torch.cat([_.unsqueeze(0) for _ in labels], dim=0)
-            attention_mask = torch.cat([_.unsqueeze(0) for _ in attention_mask], dim=0)
-
-            for i, seg in enumerate(segs):
-                if seg.sum() == 0:
-                    segs[i] = torch.zeros((1, 1, 32, 256, 256))
-                else:
-                    segs[i] = seg.unsqueeze(0)
-            segs = torch.cat(segs, dim=0)
-
-            return_dict = dict(
-                images=images,
-                input_ids=input_ids,
-                labels=labels,
-                attention_mask=attention_mask,
-                segs=segs,
-            )
-        else:
-            images, input_ids, labels, attention_mask = tuple(
-                [b[key] for b in batch] for key in ('image', 'input_id', 'label', 'attention_mask'))
-
-            images = torch.cat([_.unsqueeze(0) for _ in images], dim=0)
-            input_ids = torch.cat([_.unsqueeze(0) for _ in input_ids], dim=0)
-            labels = torch.cat([_.unsqueeze(0) for _ in labels], dim=0)
-            attention_mask = torch.cat([_.unsqueeze(0) for _ in attention_mask], dim=0)
-
-            return_dict = dict(
-                images=images,
-                input_ids=input_ids,
-                labels=labels,
-                attention_mask=attention_mask,
-            )
-
-        return return_dict
-
-def main():
-    # Initialize distributed training
-    rank, world_size, local_rank = setup_distributed()
-    
-    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
-    # Set local rank from distributed setup
-    if local_rank != -1:
-        training_args.local_rank = local_rank
-
-    # Set random seeds for reproducibility across all processes
-    transformers.set_seed(training_args.seed)
-
-    rank0_print("="*20 + " Distributed Training Setup " + "="*20)
-    rank0_print(f"Rank: {rank}, World Size: {world_size}, Local Rank: {local_rank}")
-    
-    rank0_print("="*20 + " Tokenizer preparation " + "="*20)
-    # Load tokenizer from the given path with specified configurations
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-        use_fast=False,
+def parse_arguments():
+    """Enhanced argument parser with all new parameters"""
+    parser = argparse.ArgumentParser(
+        description="Medical LLM Training with Enhanced Parameters"
     )
 
-    # Define and add special tokens
-    special_token = {"additional_special_tokens": ["<im_patch>", "<bx_start>", "<bx_end>"]}
-    tokenizer.add_special_tokens(special_token)
-    tokenizer.add_tokens("[SEG]")
+    parser.add_argument("--version", type=str, default="v0", help="Model version")
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default="microsoft/phi-2",
+        help="Model name or path",
+    )
+    parser.add_argument("--model_type", type=str, default="phi3", help="Model type")
+    parser.add_argument(
+        "--vision_tower", type=str, default="vit3d", help="Vision tower type"
+    )
+    parser.add_argument(
+        "--freeze_backbone", action="store_true", help="Freeze backbone"
+    )
+    parser.add_argument(
+        "--tune_mm_mlp_adapter", action="store_true", help="Tune MM MLP adapter"
+    )
+    parser.add_argument(
+        "--model_max_length", type=int, default=512, help="Maximum model length"
+    )
 
-    if tokenizer.unk_token is not None and tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.unk_token
-    if 'llama3' in model_args.model_type:
-        tokenizer.eos_token_id = 128001
-        tokenizer.pad_token = tokenizer.eos_token
+    # LoRA arguments
+    parser.add_argument(
+        "--lora_enable",
+        type=lambda x: x.lower() == "true",
+        default=True,
+        help="Enable LoRA",
+    )
+    parser.add_argument("--lora_r", type=int, default=16, help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
+    parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
 
-    # Convert special tokens to token IDs and set related arguments
-    model_args.img_token_id = tokenizer.convert_tokens_to_ids("<im_patch>")
-    model_args.seg_token_id = tokenizer.convert_tokens_to_ids("[SEG]")
-    model_args.vocab_size = len(tokenizer)
-    rank0_print("seg_token_id: ", model_args.seg_token_id)
-    rank0_print("vocab_size: ", model_args.vocab_size)
+    # Data arguments
+    parser.add_argument(
+        "--data_root", type=str, default="./Data/data/", help="Data root directory"
+    )
+    parser.add_argument(
+        "--cap_data_path",
+        type=str,
+        default="./Data/data/M3D_Cap_npy/M3D_Cap.json",
+        help="Caption data path",
+    )
 
-    rank0_print("="*20 + " Model preparation " + "="*20)
+    # Training arguments
+    parser.add_argument("--bf16", type=int, default=0, help="Use bf16 (0 or 1)")
+    parser.add_argument("--fp16", type=int, default=1, help="Use fp16 (0 or 1)")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./output/tinyllama-0000",
+        help="Output directory",
+    )
+    parser.add_argument(
+        "--num_train_epochs", type=int, default=5, help="Number of training epochs"
+    )
+    parser.add_argument(
+        "--per_device_train_batch_size",
+        type=int,
+        default=4,
+        help="Train batch size per device",
+    )
+    parser.add_argument(
+        "--per_device_eval_batch_size",
+        type=int,
+        default=4,
+        help="Eval batch size per device",
+    )
+
+    parser.add_argument(
+        "--per_device_test_batch_size",
+        type=int,
+        default=2,
+        help="test batch size per device",
+    )
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps",
+    )
+    parser.add_argument(
+        "--evaluation_strategy", type=str, default="steps", help="Evaluation strategy"
+    )
+    parser.add_argument(
+        "--eval_accumulation_steps", type=int, default=1, help="Eval accumulation steps"
+    )
+    parser.add_argument("--eval_steps", type=float, default=4, help="Eval steps")
+    parser.add_argument(
+        "--save_strategy", type=str, default="steps", help="Save strategy"
+    )
+    parser.add_argument("--save_steps", type=int, default=1000, help="Save steps")
+    parser.add_argument(
+        "--save_total_limit", type=int, default=1, help="Save total limit"
+    )
+    parser.add_argument(
+        "--learning_rate", type=float, default=5e-5, help="Learning rate"
+    )
+    parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay")
+    parser.add_argument("--warmup_ratio", type=float, default=0.03, help="Warmup ratio")
+    parser.add_argument(
+        "--lr_scheduler_type", type=str, default="cosine", help="LR scheduler type"
+    )
+    parser.add_argument("--logging_steps", type=float, default=4, help="Logging steps")
+    parser.add_argument(
+        "--gradient_checkpointing",
+        type=lambda x: x.lower() == "true",
+        default=False,
+        help="Gradient checkpointing",
+    )
+    # what is dataloader_pin_memory?
+
+    parser.add_argument(
+        "--dataloader_pin_memory",
+        type=lambda x: x.lower() == "False",
+        default=True,
+        help="Pin memory",
+    )
+    parser.add_argument(
+        "--dataloader_num_workers",
+        type=int,
+        default=8,
+        help="Number of dataloader workers",
+    )
+    parser.add_argument(
+        "--report_to", type=str, default="wandb", help="Reporting platform"
+    )
+
+    return parser.parse_args()
+
+
+class NaNDetectionCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        # Check model parameters for NaN
+        model = kwargs.get('model')
+        if model:
+            for name, param in model.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"NaN detected in parameter {name} at step {state.global_step}")
+                    control.should_training_stop = True
+                    return control
+                if param.grad is not None and torch.isnan(param.grad).any():
+                    print(f"NaN detected in gradient of {name} at step {state.global_step}")
+                    control.should_training_stop = True
+                    return control
+        
+        return control
     
-    # Load model
-    if model_args.vision_tower is not None:
-        if 'llama' in model_args.model_type:
-            # model = LamedLlamaForCausalLM.from_pretrained(...)
-            print("Warning: LamedLlamaForCausalLM not imported. Using standard LlamaForCausalLM")
-            model = LlamaForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                cache_dir=training_args.cache_dir,
-                torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float32,
-            )
-        elif 'phi3' in model_args.model_type:
-            # model = TracPhi3ForCausalLM.from_pretrained(...)
-            print("Warning: TracPhi3ForCausalLM not imported. Using standard LlamaForCausalLM")
-            model = LlamaForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                cache_dir=training_args.cache_dir,
-                torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float32,
-            )
-        else:
-            raise ValueError(f"Unknown Model Type {model_args.model_type}")
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        # This is where logs are available
+        if logs and 'train_loss' in logs:
+            if torch.isnan(torch.tensor(logs['train_loss'])):
+                print(f"NaN loss at step {state.global_step}: {logs}")
+                control.should_training_stop = True
+        return control
+def main():
+    cmd_args = parse_arguments()
+
+    # Create argument namespaces
+    data_args = create_data_args()
+    training_args = create_training_args()
+    print("data_args:", data_args)
+    print("training_args:", training_args)
+
+    torch.manual_seed(training_args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(training_args.seed)
+
+    print_info("=" * 20 + " Enhanced Training Setup " + "=" * 20)
+    print_info(f"Device: {training_args.device}")
+    print_info(f"Base Model{cmd_args.model_name_or_path} ")
+    print_info(f"LoRA Enabled: {training_args.lora_enable}")
+    print_info(f"BF16: {training_args.bf16}, FP16: {training_args.fp16}")
+    print_info(f"Output: {training_args.output_dir}")
+    print_info(f"Epochs: {training_args.num_train_epochs}")
+    print_info(f"Train Batch Size: {training_args.per_device_train_batch_size}")
+    print_info(f"Eval Batch Size: {training_args.per_device_eval_batch_size}")
+    print_info(f"Learning Rate: {training_args.learning_rate}")
+    print_info(f"Save Steps: {training_args.save_steps}")
+    print_info(f"Dataloader Workers: {training_args.dataloader_num_workers}")
+
+    print_info("=" * 20 + " Tokenizer preparation " + "=" * 20)
+    tokenizer = AutoTokenizer.from_pretrained(
+        cmd_args.model_name_or_path,
+        # padding_side="right",
+        # use_fast=False,
+    )
+
+    special_tokens = [
+        "<im_patch>",
+        "<end>",
+    ]
+    image_token_name = "<im_patch>"
+    end_token = "<end>"
+    num_added = tokenizer.add_tokens(special_tokens)
+
+    print(f"Added {num_added} special tokens", len(tokenizer))
+
+    collator = BboxAwareCollator(
+        tokenizer=tokenizer,
+        max_length=cmd_args.model_max_length,
+        max_bbox_length=9,
+        num_vision_token=256,
+        token_name=image_token_name,
+    )
+    train_set, val_set, test_set = load_data()
+    print("train set", len(train_set))
+    print("val set", len(val_set))
+    print("test set", len(test_set))
+    # train_loader = DataLoader(
+    #     train_set,
+    #     batch_size=training_args.per_device_test_batch_size,
+    #     collate_fn=collator,
+    #     pin_memory=cmd_args.dataloader_pin_memory,
+    # )
+    test_loader = DataLoader(
+        test_set,
+        batch_size=training_args.per_device_test_batch_size,
+        collate_fn=collator,
+        pin_memory=cmd_args.dataloader_pin_memory,
+    )
+
+    img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
+    config = TracLlamaConfig(vocab_size=len(tokenizer), img_token_id=img_token_id)
+    print("model name", cmd_args.model_name_or_path)
+    if cmd_args.model_name_or_path == "TinyLlama/TinyLlama-1.1B-Chat-v1.0":
+
+        model = TracLlamaForCausalLM(config)
     else:
-        model = LlamaForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float32,
-        )
+        raise NotImplementedError
 
-    model.config.seg_token_id = model_args.seg_token_id
-    model.config.use_cache = False
+    wandb.watch(
+        model,
+        log="all",       # Logs gradients + parameters
+        log_freq=10,     # Log every 10 steps
+        log_graph=True,  # Optional: Log computation graph
+    )
 
-    if model_args.freeze_backbone:
+    if cmd_args.freeze_backbone:
+        print_info("Freezing backbone...")
         model.model.requires_grad_(False)
 
-    model.enable_input_require_grads()
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
-    # Move model to GPU
-    if local_rank != -1:
-        model = model.to(f'cuda:{local_rank}')
-    else:
-        model = model.cuda()
+    if training_args.lora_enable:
+        set_up_lora(model, training_args)
 
-    rank0_print("Model setup complete. Add dataset and trainer initialization as needed.")
-    
-    # Note: You would add your dataset and trainer setup here
-    # The trainer will automatically handle DDP wrapping when local_rank is set
-    
-    # Example trainer setup (you'll need to add your actual dataset):
-    # trainer = transformers.Trainer(
-    #     model=model,
-    #     args=training_args,
-    #     train_dataset=train_dataset,  # Add your dataset here
-    #     eval_dataset=eval_dataset,    # Add your dataset here
-    #     tokenizer=tokenizer,
-    #     data_collator=DataCollator(seg_enable=False),  # Adjust based on your needs
-    #     compute_metrics=compute_metrics,
-    #     preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-    # )
-    
-    # Clean up distributed training when done
-    if dist.is_initialized():
-        cleanup_distributed()
+    model.all_to_device(training_args.device)
+    print("output dir", training_args.output_dir)
+   
+            
+    trainer = TracTrainer(
+        model=model,
+        args=TrainingArguments(
+            output_dir=training_args.output_dir,
+            max_grad_norm=1.0, 
+            per_device_train_batch_size=training_args.per_device_train_batch_size,
+            per_device_eval_batch_size=training_args.per_device_eval_batch_size,
+            num_train_epochs=training_args.num_train_epochs,
+            logging_dir=os.path.join(training_args.output_dir, "logs"),
+            eval_strategy=training_args.evaluation_strategy,  # Changed from evaluation_strategy
+            eval_steps=(
+                int(training_args.eval_steps) if training_args.eval_steps else None
+            ),
+            logging_steps=int(training_args.logging_steps),
+            save_strategy=training_args.save_strategy,
+            save_steps=training_args.save_steps,
+            # fp16=training_args.fp16,
+            # bf16=training_args.bf16,
+            fp16=False,  # Disable if currently True
+            bf16=False,  # Disable if currently True
+            learning_rate=training_args.learning_rate,  # Added learning_rate
+            weight_decay=training_args.weight_decay,  # Added weight_decay
+            warmup_ratio=training_args.warmup_ratio,  # Added warmup_ratio
+            lr_scheduler_type=training_args.lr_scheduler_type,  # Added lr_scheduler_type
+            gradient_accumulation_steps=training_args.gradient_accumulation_steps,  # Added gradient_accumulation_steps
+            gradient_checkpointing=training_args.gradient_checkpointing,  # Added gradient_checkpointing
+            dataloader_num_workers=training_args.dataloader_num_workers,  # Added dataloader_num_workers
+            save_total_limit=training_args.save_total_limit,  # Added save_total_limit
+            load_best_model_at_end=training_args.load_best_model_at_end,
+            report_to=["wandb"],
+            remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
+            seed=training_args.seed,  # Added seed
+            save_safetensors=False,
+            dataloader_pin_memory=False,
+        ),
+        train_dataset=train_set,
+        eval_dataset=val_set,
+        tokenizer=tokenizer,
+        data_collator=collator,
+         callbacks=[NaNDetectionCallback()]
+    )
+    torch.autograd.set_detect_anomaly(True, check_nan=True)
+    trainer.train()
+    print_info("Training complete!")
+    print("evaluate")
+    metrics = trainer.evaluate()
+    print(f"Loss: {metrics['eval_loss']}")
+    print(f"IoU: {metrics['eval_iou']}")
+
+    evaluate(
+        model=model,
+        data_loader=test_loader,
+        tokenizer=tokenizer,
+        save_path="generate_output",
+    )
+    # Save the final model
+    safe_save_model_for_hf_trainer(trainer, training_args.output_dir)
+    print_info(f"Model saved to {training_args.output_dir}")
+
 
 if __name__ == "__main__":
     main()

@@ -32,6 +32,7 @@ from model.Encoder.encoder import build_vision_tower
 from model.Projector.projector import build_mm_projector
 from transformers import PreTrainedModel, PretrainedConfig
 from model.bbox3d.bbox_decoder import BBox3DDecoder
+from model.bbox3d.helper import compute_ious
 
 class VisionEncoder(nn.Module):
     """Handles vision encoding and projection"""
@@ -42,13 +43,10 @@ class VisionEncoder(nn.Module):
         self.mm_projector_config = config.projector
         self.vision_tower = None
         self.mm_projector = None
-        self._is_built = False
 
     def build_components(self):
             """Build vision tower and projector"""
             print("Building multimodal vision tower, mm_projector components...")
-            if self._is_built:
-                return
             if self.vision_tower_config:
                 self.vision_tower = build_vision_tower(
                     self.vision_tower_config,
@@ -56,7 +54,6 @@ class VisionEncoder(nn.Module):
                 print("Vision tower built successfully.")
                 self.mm_projector = build_mm_projector(self.mm_projector_config)
                 print("MM projector built successfully.")
-                self._is_built = True
 
     def encode_images(self, images: torch.Tensor) -> Optional[torch.Tensor]:
         """Encode images to features"""
@@ -64,7 +61,7 @@ class VisionEncoder(nn.Module):
             return None
 
         image_features = self.vision_tower(images)
-        print("after vision tower stats", image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
+        # print("after vision tower stats", image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         # image_features = self.mm_projector(image_features)
         # print("after mm projector stats",  image_features.shape,image_features.min(), image_features.max(),image_features.mean(), image_features.std())
         return image_features
@@ -179,7 +176,6 @@ class TracLlamaForCausalLM(PreTrainedModel):
         output_hidden_states: bool = True,
         **kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        print("bbox gts shape",bbox_gts.shape)
         pre_input_ids = input_ids
 
         if inputs_embeds == None:
@@ -192,7 +188,7 @@ class TracLlamaForCausalLM(PreTrainedModel):
                     replace_image_token=False
                 )
             )
-        print("inputs_embeds shape", inputs_embeds.shape,"labels shape", labels.shape,"image_features shape", image_features.shape,"attention_masks shape", attention_masks.shape)
+        # print("inputs_embeds shape", inputs_embeds.shape,"labels shape", labels.shape,"image_features shape", image_features.shape,"attention_masks shape", attention_masks.shape)
         outputs = self.model(
             input_ids=None,
             inputs_embeds=inputs_embeds,
@@ -217,17 +213,19 @@ class TracLlamaForCausalLM(PreTrainedModel):
         self, outputs, image_features, bbox_gts=None, bbox_masks=None
     ):
         """Handle 3D bounding box prediction"""
-        print("handle bbox")
+        # print("handle bbox")
         predictor = self.bbox3d_predictor.predict_bboxes
         compute_bbox_loss = self.bbox3d_predictor.compute_bbox_loss
-
+        if bbox_masks is None:
+            print("bbox_masks is None")
+        if bbox_gts is None:
+            print("bbox_gts is None")
         if bbox_masks == None and bbox_gts == None:
             print("predict bbox mode")
             vision_features = image_features
             # text_features = outputs.hidden_states[-1]
             # bbox_predictions = predictor(vision_features, text_features)
             bbox_predictions = predictor(vision_features)
-            print("type bbox predictions", type(bbox_predictions))
             outputs["bbox_3d_pred"] = bbox_predictions
         else:
 
@@ -245,12 +243,12 @@ class TracLlamaForCausalLM(PreTrainedModel):
             if delta_xyz is None:
                 print ("delta_xyz is None, skip bbox prediction")
                 return outputs
-            print("delta_xyz shape", delta_xyz.shape)
-            if log_dwh is not  None:
-                print("log_dwh shape", log_dwh.shape)
-            if conf is not None:
-                print("conf shape", conf.shape)
-            print("target shape white", targets.shape)
+            # print("delta_xyz shape", delta_xyz.shape)
+            # if log_dwh is not  None:
+            #     print("log_dwh shape", log_dwh.shape)
+            # if conf is not None:
+            #     print("conf shape", conf.shape)
+            # print("target shape white", targets.shape)
             aux_loss = compute_bbox_loss(
                 delta_xyz=delta_xyz,
                 log_dwh=log_dwh,
@@ -259,19 +257,23 @@ class TracLlamaForCausalLM(PreTrainedModel):
                 masks=masks,
             )
             bbox_prediction_decoder = self.bbox_decoder.decode_predictions_v2(center_pred,delta_xyz,log_dwh,conf)
-            print("bbox decode shape",len(bbox_prediction_decoder))
             bbox_pred=[d["boxes"] for d in bbox_prediction_decoder]
-            # print("bbox_pred 0",bbox_pred[0].shape)
-            for bboxes in bbox_pred:
-                print("bbox pred shape", bboxes.shape)
+            for b in range(len(bbox_pred)):
+                # print("bbox pred samples",bbox_pred[b].detach().cpu(),targets[b].detach().cpu())
+                pairs=compute_ious(bbox_pred[b].detach().cpu(),targets[b].detach().cpu(),masks[b].detach().cpu(),mode="center")
+                print("pairs",pairs)
+                # print("bbox pred shape", bboxes.shape)
                 # print("bbox pred min max")
-            for k,v in aux_loss.items():
-                print(f"bbox loss {k}", v.item())
-            print("output loss", outputs.loss.item())
             outputs.loss = outputs.loss + aux_loss["total_loss"]
-            outputs["bbox_3d_loss"] = aux_loss["total_loss"]
             outputs["bbox_3d_pred"] = bbox_pred
-
+            outputs["aux_loss"]={
+                "bbox_3d_loss":aux_loss["total_loss"].item(),
+                "pos_loss":aux_loss["pos_loss"].item(),
+                "size_loss":aux_loss["size_loss"].item(),
+                "conf_loss":aux_loss["conf_loss"].item(),
+            }
+            
+     
         return outputs
 
     @torch.no_grad()

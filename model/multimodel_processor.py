@@ -33,7 +33,7 @@ class MultimodalProcessor(nn.Module):
             inputs_embeds, labels, image_features
         """
         batch_size = input_ids.shape[0]
-        print("batch size:", batch_size)
+        # print("batch size:", batch_size)
         image_features =  torch.as_tensor(self.vision_encoder.encode_images(images))
         new_labels = []
         new_inputs_embeds = []
