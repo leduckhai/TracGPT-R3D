@@ -15,187 +15,57 @@ class BBox3DDecoder:
         """
         self.conf_threshold = conf_threshold
         self.nms_threshold = nms_threshold
+        self.num_anchors = 1
     
-    
-    def decode_predictions_v2(self, center_pred, delta_xyz, log_dwh, conf_pred):
-        """
-        Decode patch-based model predictions into meaningful 3D bounding boxes
-
-        Args:
-            center_pred (torch.Tensor): [B,4,4,4] - boolean mask marking the center of the patch
-            delta_xyz (torch.Tensor): [B,4,4,4,n_pred,3] - position offsets
-            log_dwh (torch.Tensor): [B,4,4,4,n_pred,3] - log-scale dimensions
-            conf_pred (torch.Tensor): [B,4,4,4,n_pred] - confidence scores
-            original_shape (tuple): Original image dimensions (D, H, W)
-
-        Returns:
-            list: List of dictionaries containing the decoded bounding boxes and scores for each batch
-        """
-        # print("center_pred", center_pred.shape, "delta_zxy", delta_xyz.shape, "log_dwh", log_dwh.shape, "conf_pred", conf_pred.shape)
-        batch_preds = []
-        D, H, W = 4, 4, 4  # Spatial dimensions
-        B, p_x, p_y, p_z, n_pred, _ = delta_xyz.shape  # [B,4,4,4,5,3]
-        device = delta_xyz.device
-
-        center_pred = center_pred.to(device)  # Shape: [4,4,4]
-
-        z_centers = torch.linspace(0, 1, D, device=device).view(1, 1, 1, D, 1).expand(B, H, W, D, n_pred)
-        y_centers = torch.linspace(0, 1, H, device=device).view(1, H, 1, 1, 1).expand(B, H, W, D, n_pred)
-        x_centers = torch.linspace(0, 1, W, device=device).view(1, 1, W, 1, 1).expand(B, H, W, D, n_pred)
-
-        #  grid + offset
-        # print("x center shape",x_centers.shape,  delta_xyz[..., 0].shape)
-        pred_cx = x_centers + delta_xyz[..., 0]  # [B,4,4,4,5]
-        pred_cy = y_centers + delta_xyz[..., 1]  # [B,4,4,4,5]
-        pred_cz = z_centers + delta_xyz[..., 2]  # [B,4,4,4,5]
-
-        # 4. Decode box dimensions: exp(log_scale)
-        pred_w = torch.exp(log_dwh[..., 1])  # [B,4,4,4,5]
-        pred_h = torch.exp(log_dwh[..., 0])  # [B,4,4,4,5]
-        pred_d = torch.exp(log_dwh[..., 2])  # [B,4,4,4,5]
-
-        # 5. Stack into [cx, cy, cz, w, h, d] format
-        pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=-1)  # [B,4,4,4,5,6]
-
-        pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=-1)  # [B,4,4,4,5,6]
-        # print("pred_boxes",pred_boxes.shape)
-        batch_results = []
-        for b in range(B):
-            boxes_flat = pred_boxes[b].reshape(-1, 6)  # [4*4*4*5, 6]
-            conf_flat = conf_pred[b].flatten()         # [4*4*4*5]
-            # print("boxes_flat",boxes_flat.shape,"conf_flat",conf_flat.shape)
-            # print("center_pred",center_pred[b])
-            # print("conf")
-            center_mask = center_pred[b].unsqueeze(-1).expand(-1, -1, -1, n_pred).reshape(-1)  # [4*4*4*5]
-            # print("center_mask",center_mask)
-            combined_mask = (conf_flat > self.conf_threshold) & center_mask  # [4*4*4*5]
-
-            if not combined_mask.any():
-                batch_results.append({
-                    'boxes': torch.empty(0, 6, device=device),
-                    'scores': torch.empty(0, device=device),
-                })
-                continue
-
-            valid_boxes = boxes_flat[combined_mask]  # [N_valid, 6]
-            valid_scores = conf_flat[combined_mask]  # [N_valid]
-
-         
-            final_scores = valid_scores
-            valid_class_indices = None
-
-            if len(valid_boxes) > 0:
-                # keep_indices = self.nms_3d(valid_boxes, final_scores, self.nms_threshold)
-                # final_boxes = valid_boxes[keep_indices]
-                # final_scores = final_scores[keep_indices]
-                # final_classes = valid_class_indices[keep_indices] if valid_class_indices is not None else None
-                final_boxes=valid_boxes
-                final_scores=valid_scores
-            else:
-                final_boxes = torch.empty(0, 6, device=device)
-                final_scores = torch.empty(0, device=device)
-
-            batch_results.append({
-                'boxes': final_boxes,
-                'scores': final_scores,
-            })
-
-        return batch_results
-    def decode_predictions(self,center_pred, delta_zxy, log_dwh, conf_pred, class_preds=None, original_shape=None):
-        # print("center_pred",center_pred.shape,"delta_zxy",delta_zxy.shape,"log_dwh",log_dwh.shape,"conf_pred",conf_pred.shape,"class_preds",class_preds.shape)
-        """
-        Decode model predictions into meaningful 3D bounding boxes
+    def decode_predictions_v3(self, center_pred, delta_xyz, log_dwh):
+        conf_thresh = self.conf_threshold if hasattr(self, 'conf_threshold') else 0.4
+        B = center_pred.shape[0]
+        D, H, W = center_pred.shape[1:4]
+        device = center_pred.device
         
-        Args:
-            preds: Tuple of (delta_zxy, log_dwh, conf)
-                - delta_zxy: (B, num_anchors, 3, D, H, W) - position offsets
-                - log_dwh: (B, num_anchors, 3, D, H, W) - log-scale dimensions
-                - conf: (B, num_anchors, D, H, W) - confidence scores
-            class_preds: (B, num_anchors, num_classes, D, H, W) - class predictions (optional)
-            original_shape: (depth, height, width) - original volume shape for scaling
-            
-        Returns:
-            List of decoded boxes for each batch item:
-            Each item contains:
-                - boxes: (N, 6) tensor [cx, cy, cz, w, h, d] in normalized coords
-                - scores: (N,) tensor of confidence scores
-                - classes: (N,) tensor of predicted class indices (if class_preds provided)
-        """
-        B, num_anchors, _, D, H, W = delta_zxy.shape
-        device = delta_zxy.device
+        # Create grid centers
+        z_centers = torch.linspace(0.5/D, 1-0.5/D, D, device=device)
+        y_centers = torch.linspace(0.5/H, 1-0.5/H, H, device=device)
+        x_centers = torch.linspace(0.5/W, 1-0.5/W, W, device=device)
         
-        # Create grid coordinates for each patch center
-        z_centers = torch.linspace(0, 1, D, device=device).view(1, 1, D, 1, 1)
-        y_centers = torch.linspace(0, 1, H, device=device).view(1, 1, 1, H, 1)
-        x_centers = torch.linspace(0, 1, W, device=device).view(1, 1, 1, 1, W)
-        
-        # Decode position: grid_center + offset
-        pred_cx = x_centers + delta_zxy[:, :, 1, ...]  # x offset
-        pred_cy = y_centers + delta_zxy[:, :, 0, ...]  # y offset  
-        pred_cz = z_centers + delta_zxy[:, :, 2, ...]  # z offset
-        
-        # Decode dimensions: exp(log_scale)
-        pred_w = torch.exp(log_dwh[:, :, 1, ...])  # width
-        pred_h = torch.exp(log_dwh[:, :, 0, ...])  # height
-        pred_d = torch.exp(log_dwh[:, :, 2, ...])  # depth
-        
-        # Stack into box format: [cx, cy, cz, w, h, d]
-        pred_boxes = torch.stack([pred_cx, pred_cy, pred_cz, pred_w, pred_h, pred_d], dim=2)
-        # Shape: (B, num_anchors, 6, D, H, W)
-        
-        # Process class predictions if provided
-        if class_preds is not None:
-            class_scores, class_indices = torch.max(class_preds, dim=2)
-            # Shape: (B, num_anchors, D, H, W)
+        # Broadcast to all positions
+        grid_z, grid_y, grid_x = torch.meshgrid(z_centers, y_centers, x_centers, indexing='ij')
+        grid_xyz = torch.stack((grid_x, grid_y, grid_z), dim=-1)  # [D,H,W,3]
         
         batch_results = []
         
+        z_dim, y_dim, x_dim = center_pred[0].shape
+        z = torch.arange(z_dim)
+        y = torch.arange(y_dim)
+        x = torch.arange(x_dim)
+        grid_z, grid_y, grid_x = torch.meshgrid(z, y, x, indexing='ij')
+
+        combinations = torch.stack((grid_z, grid_y, grid_x), dim=-1).reshape(-1, 3)
         for b in range(B):
-            # Get predictions for this batch item
-            boxes_b = pred_boxes[b]  # (num_anchors, 6, D, H, W)
-            conf_b = conf_pred[b]    # (num_anchors, D, H, W)
-            
-            # Reshape to flatten spatial dimensions
-            boxes_flat = boxes_b.permute(0, 2, 3, 4, 1).reshape(-1, 6)  # (num_anchors*D*H*W, 6)
-            conf_flat = conf_b.flatten()  # (num_anchors*D*H*W,)
-            
-            # Filter by confidence threshold
-            valid_mask = conf_flat > self.conf_threshold
-            if not valid_mask.any():
-                # No valid predictions
-                batch_results.append({
-                    'boxes': torch.empty(0, 6, device=device),
-                    'scores': torch.empty(0, device=device),
-                    'classes': torch.empty(0, dtype=torch.long, device=device) if class_preds is not None else None
-                })
-                continue
-            
-            valid_boxes = boxes_flat[valid_mask]
-            valid_scores = conf_flat[valid_mask]
-            
-            final_scores = valid_scores
-            valid_class_indices = None
-            
-            # Apply Non-Maximum Suppression
-            if len(valid_boxes) > 0:
-                keep_indices = self.nms_3d(valid_boxes, final_scores, self.nms_threshold)
-                final_boxes = valid_boxes[keep_indices]
-                final_scores = final_scores[keep_indices]
-            else:
-                final_boxes = torch.empty(0, 6, device=device)
-                final_scores = torch.empty(0, device=device)
-            
-            # Scale to original volume size if provided
-            if original_shape is not None:
-                final_boxes = self.scale_to_original(final_boxes, original_shape)
+        
+            valid_boxes = []
+            for z, y, x in combinations:
+                grid_center = grid_xyz[z,y,x]
+                
+                for a in range(self.num_anchors):
+                    cx = grid_center[0] + delta_xyz[b,z,y,x,a,0]
+                    cy = grid_center[1] + delta_xyz[b,z,y,x,a,1]
+                    cz = grid_center[2] + delta_xyz[b,z,y,x,a,2]
+                    
+                    # Decode box dimensions
+                    w = torch.exp(log_dwh[b,z,y,x,a,0])
+                    h = torch.exp(log_dwh[b,z,y,x,a,1])
+                    d = torch.exp(log_dwh[b,z,y,x,a,2])
+                    
+                    valid_boxes.append(torch.stack([cx, cy, cz, w, h, d]))
             
             batch_results.append({
-                'boxes': final_boxes,
-                'scores': final_scores,
+                'boxes': torch.stack(valid_boxes) if valid_boxes else torch.empty(0, 6, device=device),
+                # 'scores': topk_values[:len(valid_boxes)] if valid_boxes else torch.empty(0, device=device)
             })
         
         return batch_results
-    
+   
     def nms_3d(self, boxes, scores, threshold):
         print("nms_3d boxes", boxes.shape, "scores", scores.shape)
         """

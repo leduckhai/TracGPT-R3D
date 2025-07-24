@@ -36,7 +36,6 @@ class TracDataset(Dataset):
         self.mode = mode
         self.base_transform = Compose(
             [
-                #  AddChannelD(keys=["image"])
                 EnsureChannelFirstD(keys=["image"],channel_dim="no_channel"),
     
     ScaleIntensityRanged(
@@ -60,7 +59,7 @@ class TracDataset(Dataset):
 
         train_transform = mtf.Compose(
             [
-                mtf.RandRotate90d(keys=["image", "seg"], prob=0.5, spatial_axes=(1, 2)),
+                mtf.RandRotate90d(keys=["image"], prob=0.5, spatial_axes=(1, 2)),
                 mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=0),
                 mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=1),
                 mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=2),
@@ -108,7 +107,7 @@ class TracDataset(Dataset):
             self.qa_banks = [d for d in self.qa_banks if d["answer_type"] == "bbox_3d"]
         if n_sample != -1:
             self.qa_banks = self.qa_banks[:n_sample]
-       
+        random.shuffle(self.qa_banks)
 
     def __len__(self):
         return len(self.qa_banks)

@@ -1,19 +1,19 @@
-#!/bin/bash
-
 export WORLD_SIZE=1
 export RANK=0
 export LOCAL_RANK=0
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export CUDA_LAUNCH_BLOCKING=1
 export WANDB_DIR=./output/wandb
-python  main_vision.py \
+
+# Redirect stdout and stderr to a log file
+python main_vision.py \
     --version v0 \
     --model_name_or_path TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
-    --model_type tiny_llama\
+    --model_type tiny_llama \
     --lora_enable True \
     --vision_tower vit3d \
     --bf16 0 \
-    --fp16 1\
+    --fp16 1 \
     --output_dir ./output/TinyLLama-finetune-0000 \
     --num_train_epochs 1 \
     --per_device_train_batch_size 8 \
@@ -31,6 +31,7 @@ python  main_vision.py \
     --lr_scheduler_type "cosine" \
     --logging_steps 0.001 \
     --gradient_checkpointing False \
-    --dataloader_pin_memory True\
+    --dataloader_pin_memory True \
     --dataloader_num_workers 8 \
-    --report_to tensorboard
+    --report_to tensorboard \
+    > training.log 2>&1

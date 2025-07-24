@@ -122,18 +122,22 @@ class TracVisionModel(nn.Module):
             masks = bbox_masks[bbox_samples]
 
             vision_features = features[bbox_samples]
-            center_pred,delta_xyz,log_dwh,conf= predictor(vision_features)
+            # center_pred,delta_xyz,log_dwh,conf= predictor(vision_features)
+            center_pred,delta_xyz,log_dwh= predictor(vision_features)
             bbox_aux_loss = compute_bbox_loss(
                 delta_xyz=delta_xyz,
                 log_dwh=log_dwh,
-                conf_pred=conf,
+                # conf_pred=conf,
+                center_pred=center_pred,
                 targets=targets,
                 masks=masks,
             )
-            bbox_prediction_decoder = self.bbox_decoder.decode_predictions_v2(center_pred,delta_xyz,log_dwh,conf)
+            bbox_prediction_decoder = self.bbox_decoder.decode_predictions_v3(center_pred,delta_xyz,log_dwh)
+            # print("gt boxes",targets)
             bbox_pred=[d["boxes"] for d in bbox_prediction_decoder]
+            
             for b in range(len(bbox_pred)):
-                # print("bbox pred samples",bbox_pred[b].detach().cpu(),targets[b].detach().cpu())
+                print("n bbox pred samples",len(bbox_pred[b]))
                 pairs=compute_ious(bbox_pred[b].detach().cpu(),targets[b].detach().cpu(),masks[b].detach().cpu(),mode="center")
                 # print("pairs",pairs)
                 print("Pair iou",pairs["iou"])
@@ -143,8 +147,10 @@ class TracVisionModel(nn.Module):
                 "bbox_3d_loss":bbox_aux_loss["total_loss"].item(),
                 "pos_loss":bbox_aux_loss["pos_loss"].item(),
                 "size_loss":bbox_aux_loss["size_loss"].item(),
-                "conf_loss":bbox_aux_loss["conf_loss"].item(),
+                "center_loss":bbox_aux_loss["center_loss"].item(),
+                # "conf_loss":bbox_aux_loss["conf_loss"].item(),
             }
+            print("bbox aux loss",aux_loss)
                 
         else:
             print("No bbox samples bbox mask",bbox_masks)
@@ -194,7 +200,7 @@ if __name__=="__main__":
     model.to("cuda")
     with torch.no_grad():
         for i, batch in enumerate(dl):
-            if i == 1:
+            if i == 5:
                 break
             (
             images,
@@ -219,12 +225,17 @@ if __name__=="__main__":
             
             bbox_mask = bbox_masks.to("cuda")
             position_ids = position_ids.to("cuda")
-            print("forward pass")
-            print("center_bbox_gts shape",center_bbox_gts.shape)
+            # print("forward pass")
+            # print("center_bbox_gts shape",center_bbox_gts.shape)
+            # print("center_bbox_gts",center_bbox_gts.unique())
+            assert positive_centers[positive_centers>0.0].float().sum().item() == bbox_masks.sum().item(), (
+            f"Expected center_bbox_gts {positive_centers.sum().item()} "
+            f"and bbox_masks to be equal {bbox_masks.sum().item()}"
+        )
             outputs = model(
                 images=images,
                 bbox_gts=center_bbox_gts,
                 bbox_masks=bbox_masks,
                 labels=labels,
             )
-            print("outputs",outputs)
+            # print("outputs",outputs)

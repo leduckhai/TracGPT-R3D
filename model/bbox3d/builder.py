@@ -63,14 +63,15 @@ class BBox3DPredictor(nn.Module):
         # bbox_preds,
         delta_xyz: torch.Tensor,
         log_dwh: torch.Tensor,
-        conf_pred: torch.Tensor,
+        # conf_pred: torch.Tensor,
+        center_pred: torch.Tensor,
         targets: torch.Tensor,
         masks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Optimized bbox loss computation with vectorized operations"""
         if self.config.bbox_type=="anchor" or self.config.bbox_type=="anchor_v2":
-            
-            return self.loss_calculator(delta_xyz, log_dwh, conf_pred, targets,masks)
+            print("delta_xyz",delta_xyz.shape,"log_dwh",log_dwh.shape,"center_pred",center_pred.shape,"targets",targets.shape,"masks",masks.shape)
+            return self.loss_calculator(center_pred,delta_xyz, log_dwh,  targets,masks)
       
         else:
             raise NotImplementedError(

@@ -111,7 +111,7 @@ def create_training_args():
     args.gradient_accumulation_steps = 1
     args.evaluation_strategy = "steps"
     args.eval_accumulation_steps = 1
-    args.eval_steps = 40
+    args.eval_steps = 200
     args.save_strategy = "steps"
     args.save_steps = 1000
     args.save_total_limit = 1
@@ -422,7 +422,7 @@ def main():
         num_vision_token=256,
         token_name=image_token_name,
     )
-    train_set, val_set, test_set = load_data()
+    train_set, val_set, test_set = load_data(bbox_only=True)
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))

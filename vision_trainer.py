@@ -150,7 +150,6 @@ class TracVisionTrainer(Trainer):
         if iou_scores:
             avg_metrics[f"{metric_key_prefix}_iou"] = np.mean(iou_scores)
         
-        # Log to wandb
         if wandb.run is not None:
             wandb.log({
                 **avg_metrics,

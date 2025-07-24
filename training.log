@@ -1,0 +1,433 @@
+wandb: Currently logged in as: nguyenduc150202 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.21.0
+wandb: Run data is saved locally in ./output/wandb/wandb/run-20250724_231523-5lc6xd42
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run Trac_llama-24-07-2025--23-15-23
+wandb: ⭐️ View project at https://wandb.ai/nguyenduc150202/TracGPT
+wandb: 🚀 View run at https://wandb.ai/nguyenduc150202/TracGPT/runs/5lc6xd42
+/workspace/TracGPT-R3D/venv/lib/python3.11/site-packages/monai/utils/deprecate_utils.py:221: FutureWarning: monai.networks.blocks.patchembedding PatchEmbeddingBlock.__init__:pos_embed: Argument `pos_embed` has been deprecated since version 1.2. It will be removed in version 1.4. please use `proj_type` instead.
+  warn_deprecated(argname, msg, warning_category)
+wandb: logging graph, to disable use `wandb.watch(log_graph=False)`
+/workspace/TracGPT-R3D/vision_trainer.py:11: FutureWarning: `tokenizer` is deprecated and will be removed in version 5.0.0 for `TracVisionTrainer.__init__`. Use `processing_class` instead.
+  super().__init__(*args, **kwargs)
+wandb: WARNING The `run_name` is currently set to the same value as `TrainingArguments.output_dir`. If this was not intended, please specify a different run name by setting the `TrainingArguments.run_name` parameter.
+data_args: Namespace(data_root='./Data/data/', cap_data_path='./Data/data/M3D_Cap_npy/M3D_Cap.json', vqa_data_train_path='./Data/data/M3D-VQA/M3D_VQA_train.csv', vqa_data_val_path='./Data/data/M3D-VQA/M3D_VQA_val.csv', vqa_data_test_path='./Data/data/M3D-VQA/M3D_VQA_test.csv', vqa_yn_data_train_path='./Data/data/M3D-VQA/M3D_VQA_yn_train.csv', seg_data_path='./Data/data/M3D_Seg_npy/', refseg_data_train_path='./Data/data/M3D_RefSeg_npy/M3D_RefSeg.csv', refseg_data_test_path='./Data/data/M3D_RefSeg_npy/M3D_RefSeg_test.csv')
+training_args: Namespace(lora_enable=True, lora_r=16, lora_alpha=32, lora_dropout=0.05, lora_weight_path='', lora_bias='none', cache_dir=None, remove_unused_columns=False, model_max_length=512, seed=42, optim='adamw_torch', bf16=False, fp16=True, output_dir='./output/Tinyllama-finetune-0000/', num_train_epochs=3, per_device_train_batch_size=8, per_device_eval_batch_size=4, per_device_test_batch_size=1, gradient_accumulation_steps=1, evaluation_strategy='steps', eval_accumulation_steps=1, eval_steps=200, save_strategy='steps', save_steps=1000, save_total_limit=1, learning_rate=5e-05, weight_decay=0.0, warmup_ratio=0.03, lr_scheduler_type='cosine', logging_steps=8, gradient_checkpointing=False, dataloader_pin_memory=True, dataloader_num_workers=8, report_to='tensorboard', local_rank=-1, world_size=1, process_index=0, n_gpu=1, device=device(type='cuda'), do_train=True, do_eval=True, do_predict=False, overwrite_output_dir=True, load_best_model_at_end=False, metric_for_best_model=None, greater_is_better=None, ignore_data_skip=False, save_safetensors=True, save_on_each_node=False, save_only_model=False, no_cuda=False, use_legacy_prediction_loop=False, prediction_loss_only=False, run_name=None, logging_dir=None, logging_strategy='steps', logging_first_step=False, logging_nan_inf_filter=True, include_inputs_for_metrics=False, label_smoothing_factor=0.0, debug=[], sharded_ddp=[], fsdp=[], fsdp_config={}, deepspeed=None, label_names=None, resume_from_checkpoint=None, hub_model_id=None, hub_strategy='every_save', hub_token=None, hub_private_repo=False, hub_always_push=False, gradient_checkpointing_kwargs=None, include_num_input_tokens_seen=False, neftune_noise_alpha=None, optim_args=None, ray_scope='last', ddp_timeout=1800, torch_compile=False, torch_compile_backend=None, torch_compile_mode=None, dispatch_batches=None, split_batches=False, include_tokens_per_second=False, should_save=True)
+==================== Enhanced Training Setup ====================
+Device: cuda
+Base ModelTinyLlama/TinyLlama-1.1B-Chat-v1.0 
+LoRA Enabled: True
+BF16: False, FP16: True
+Output: ./output/Tinyllama-finetune-0000/
+Epochs: 3
+Train Batch Size: 8
+Eval Batch Size: 4
+Learning Rate: 5e-05
+Save Steps: 1000
+Dataloader Workers: 8
+==================== Tokenizer preparation ====================
+Added 2 special tokens 32002
+train set 1000
+val set 100
+test set 50
+Vision tower built successfully.
+V2 anchor bbox loss
+trainable params 1840648
+Total trainable params: 1840648
+Trainable layers:
+	vision_encoder.mm_projector.up1.0.weight
+	vision_encoder.mm_projector.up1.0.bias
+	vision_encoder.mm_projector.up1.1.weight
+	vision_encoder.mm_projector.up1.1.bias
+	vision_encoder.mm_projector.up2.0.weight
+	vision_encoder.mm_projector.up2.0.bias
+	vision_encoder.mm_projector.up2.1.weight
+	vision_encoder.mm_projector.up2.1.bias
+	vision_encoder.mm_projector.out_conv.weight
+	vision_encoder.mm_projector.out_conv.bias
+	bbox3d_predictor.bbox3d_head.center_head.0.weight
+	bbox3d_predictor.bbox3d_head.center_head.0.bias
+	bbox3d_predictor.bbox3d_head.center_head.3.weight
+	bbox3d_predictor.bbox3d_head.center_head.3.bias
+	bbox3d_predictor.bbox3d_head.center_head.4.weight
+	bbox3d_predictor.bbox3d_head.center_head.4.bias
+	bbox3d_predictor.bbox3d_head.center_head.6.weight
+	bbox3d_predictor.bbox3d_head.center_head.6.bias
+	bbox3d_predictor.bbox3d_head.bbox_head.0.weight
+	bbox3d_predictor.bbox3d_head.bbox_head.0.bias
+	bbox3d_predictor.bbox3d_head.bbox_head.3.weight
+	bbox3d_predictor.bbox3d_head.bbox_head.3.bias
+	bbox3d_predictor.bbox3d_head.bbox_head.4.weight
+	bbox3d_predictor.bbox3d_head.bbox_head.4.bias
+	bbox3d_predictor.bbox3d_head.bbox_head.6.weight
+	bbox3d_predictor.bbox3d_head.bbox_head.6.bias
+Layer grad 1840648
+  0%|          | 0/375 [00:00<?, ?it/s]  0%|          | 1/375 [00:06<43:04,  6.91s/it]  1%|          | 2/375 [00:11<33:02,  5.31s/it]  1%|          | 3/375 [00:15<30:18,  4.89s/it]  1%|          | 4/375 [00:19<28:30,  4.61s/it]  1%|▏         | 5/375 [00:24<28:17,  4.59s/it]  2%|▏         | 6/375 [00:28<27:06,  4.41s/it]delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.015161569230258465
+best ious mean 0.0073259626515209675
+best ious mean 0.043633460998535156
+best ious mean 0.06153019890189171
+best ious mean 0.046578992158174515
+best ious mean 0.017422864213585854
+best ious mean 0.014318395406007767
+best ious mean 0.018817337229847908
+gt center sum metatensor(25., device='cuda:0')
+pos mask metatensor(75, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0189, 0.0212, 0.0068, 0.0237, 0.0364, 0.0202])
+n bbox pred samples 64
+Pair iou tensor([0.0181, 0.0233, 0.0190])
+n bbox pred samples 64
+Pair iou tensor([0.0572, 0.0688])
+n bbox pred samples 64
+Pair iou tensor([0.0302])
+n bbox pred samples 64
+Pair iou tensor([0.0314, 0.0338])
+n bbox pred samples 64
+Pair iou tensor([0.0109, 0.0085, 0.0120, 0.0161])
+n bbox pred samples 64
+Pair iou tensor([0.0670, 0.0542])
+n bbox pred samples 64
+Pair iou tensor([0.0181, 0.0348, 0.0478, 0.0155, 0.0143, 0.0329, 0.0135])
+bbox aux loss {'bbox_3d_loss': 5.34889030456543, 'pos_loss': 0.36592110991477966, 'size_loss': 3.0243499279022217, 'center_loss': 1.9586197137832642}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.028804298490285873
+best ious mean 0.008144772611558437
+best ious mean 0.018779883161187172
+best ious mean 0.011179794557392597
+best ious mean 0.04068422317504883
+best ious mean 0.04495121166110039
+best ious mean 0.016083959490060806
+best ious mean 0.010388930328190327
+gt center sum metatensor(25., device='cuda:0')
+pos mask metatensor(75, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0290, 0.0201, 0.0173, 0.0137, 0.0269, 0.0190, 0.0359])
+n bbox pred samples 64
+Pair iou tensor([0.0269, 0.0390, 0.0136])
+n bbox pred samples 64
+Pair iou tensor([0.0345, 0.0697, 0.0026, 0.0084])
+n bbox pred samples 64
+Pair iou tensor([0.0589, 0.0047, 0.0055, 0.0146, 0.0303, 0.0552])
+n bbox pred samples 64
+Pair iou tensor([0.0338])
+n bbox pred samples 64
+Pair iou tensor([0.0505])
+n bbox pred samples 64
+Pair iou tensor([0.0218, 0.0802, 0.0759, 0.0517, 0.0008, 0.0008, 0.0013, 0.0003, 0.0003])
+n bbox pred samples 64
+Pair iou tensor([0.0514])
+bbox aux loss {'bbox_3d_loss': 5.710361480712891, 'pos_loss': 0.3803972899913788, 'size_loss': 3.523207426071167, 'center_loss': 1.806756615638733}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.012857700698077679
+best ious mean 0.006676209159195423
+best ious mean 0.04689575731754303
+best ious mean 0.01342920120805502
+best ious mean 0.011292822659015656
+best ious mean 0.022996490821242332
+best ious mean 0.01363929733633995
+best ious mean 0.011958514340221882
+gt center sum metatensor(16., device='cuda:0')
+pos mask metatensor(48, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0591])
+n bbox pred samples 64
+Pair iou tensor([0.1155])
+n bbox pred samples 64
+Pair iou tensor([0.0291, 0.0519])
+n bbox pred samples 64
+Pair iou tensor([0.0043, 0.1084])
+n bbox pred samples 64
+Pair iou tensor([0.0439, 0.0390])
+n bbox pred samples 64
+Pair iou tensor([0.0369, 0.0445, 0.0382, 0.0317])
+n bbox pred samples 64
+Pair iou tensor([0.0096, 0.0237, 0.0317])
+n bbox pred samples 64
+Pair iou tensor([0.0237, 0.0083, 0.0196])
+bbox aux loss {'bbox_3d_loss': 5.294818878173828, 'pos_loss': 0.36234351992607117, 'size_loss': 2.8884496688842773, 'center_loss': 2.044025421142578}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.02821100689470768
+best ious mean 0.0701078400015831
+best ious mean 0.031084075570106506
+best ious mean 0.11719308793544769
+best ious mean 0.009139415808022022
+best ious mean 0.13901065289974213
+best ious mean 0.014849919825792313
+best ious mean 0.012812349013984203
+gt center sum metatensor(29., device='cuda:0')
+pos mask metatensor(87, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0280, 0.0219, 0.0626, 0.0404])
+n bbox pred samples 64
+Pair iou tensor([0.0062, 0.0769])
+n bbox pred samples 64
+Pair iou tensor([0.0321, 0.0129, 0.0265, 0.0155, 0.0090, 0.0128])
+n bbox pred samples 64
+Pair iou tensor([0.0490])
+n bbox pred samples 64
+Pair iou tensor([0.0305, 0.0133, 0.0306])
+n bbox pred samples 64
+Pair iou tensor([0.0459])
+n bbox pred samples 64
+Pair iou tensor([0.0005, 0.0013, 0.0005, 0.0250, 0.0411, 0.0012, 0.0007, 0.0460, 0.0159])
+n bbox pred samples 64
+Pair iou tensor([0.0091, 0.0098, 0.0469, 0.0459])
+bbox aux loss {'bbox_3d_loss': 5.272167205810547, 'pos_loss': 0.4690685272216797, 'size_loss': 3.2025513648986816, 'center_loss': 1.6005473136901855}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.05069105699658394
+best ious mean 0.015689650550484657
+best ious mean 0.007241109386086464
+best ious mean 0.09365975856781006
+best ious mean 0.03972623497247696
+best ious mean 0.1551467925310135
+best ious mean 0.005272222682833672
+best ious mean 0.052714016288518906
+gt center sum metatensor(38., device='cuda:0')
+pos mask metatensor(114, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0239, 0.0129, 0.0424, 0.0221])
+n bbox pred samples 64
+Pair iou tensor([0.0355])
+n bbox pred samples 64
+Pair iou tensor([0.0388, 0.0011, 0.0003, 0.0016, 0.0008, 0.0517, 0.0368, 0.0006, 0.0004])
+n bbox pred samples 64
+Pair iou tensor([0.0753, 0.1078])
+n bbox pred samples 64
+Pair iou tensor([0.0340, 0.0284, 0.0314, 0.0211, 0.0249, 0.0448, 0.0355])
+n bbox pred samples 64
+Pair iou tensor([0.1012, 0.0676])
+n bbox pred samples 64
+Pair iou tensor([0.0025, 0.0025, 0.0059, 0.0032, 0.0053, 0.0028, 0.0034, 0.0041, 0.0067])
+n bbox pred samples 64
+Pair iou tensor([0.0188, 0.0612, 0.0247, 0.0034, 0.0020, 0.0649])
+bbox aux loss {'bbox_3d_loss': 5.237329006195068, 'pos_loss': 0.41587314009666443, 'size_loss': 3.355586051940918, 'center_loss': 1.465869665145874}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.023667840287089348
+best ious mean 0.06785526871681213
+best ious mean 0.047068748623132706
+best ious mean 0.052101753652095795
+best ious mean 0.01619199849665165
+best ious mean 0.09409375488758087
+best ious mean 0.02775939740240574
+best ious mean 0.023763524368405342
+gt center sum metatensor(15., device='cuda:0')
+pos mask metatensor(45, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.1445])
+n bbox pred samples 64
+Pair iou tensor([0.0613, 0.1025])
+n bbox pred samples 64
+Pair iou tensor([0.0458])
+n bbox pred samples 64
+Pair iou tensor([0.0253, 0.1016])
+n bbox pred samples 64
+Pair iou tensor([0.0923])
+n bbox pred samples 64
+Pair iou tensor([0.0507, 0.0064])
+n bbox pred samples 64
+Pair iou tensor([0.0091, 0.0601, 0.0280, 0.0026])
+n bbox pred samples 64
+Pair iou tensor([0.0332, 0.0333, 0.0503])
+bbox aux loss {'bbox_3d_loss': 3.7565970420837402, 'pos_loss': 0.32577356696128845, 'size_loss': 2.238758087158203, 'center_loss': 1.1920654773712158}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.07998909056186676
+best ious mean 0.0996566116809845
+best ious mean 0.0396479107439518
+best ious mean 0.01933797262609005
+best ious mean 0.050276611000299454
+best ious mean 0.01369938999414444
+best ious mean 0.03960610181093216
+best ious mean 0.034171123057603836
+gt center sum metatensor(20., device='cuda:0')
+pos mask metatensor(60, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0784, 0.0853, 0.0625, 0.0331, 0.0155, 0.0304, 0.0416])
+n bbox pred samples 64
+Pair iou tensor([0.0877, 0.0596])
+n bbox pred samples 64
+Pair iou tensor([0.0839, 0.0829])
+  2%|▏         | 7/375 [00:32<26:51,  4.38s/it]  2%|▏         | 8/375 [00:36<26:29,  4.33s/it]                                                 2%|▏         | 8/375 [00:36<26:29,  4.33s/it]  2%|▏         | 9/375 [00:40<26:04,  4.28s/it]  3%|▎         | 10/375 [00:46<28:39,  4.71s/it]  3%|▎         | 11/375 [00:50<27:40,  4.56s/it]  3%|▎         | 12/375 [00:55<27:06,  4.48s/it]  3%|▎         | 13/375 [00:59<26:17,  4.36s/it]n bbox pred samples 64
+Pair iou tensor([0.0855])
+n bbox pred samples 64
+Pair iou tensor([0.0501])
+n bbox pred samples 64
+Pair iou tensor([0.1092])
+n bbox pred samples 64
+Pair iou tensor([0.0405, 0.0251, 0.0135, 0.0283])
+n bbox pred samples 64
+Pair iou tensor([0.0068, 0.0604])
+bbox aux loss {'bbox_3d_loss': 3.482191562652588, 'pos_loss': 0.37748774886131287, 'size_loss': 1.9313472509384155, 'center_loss': 1.1733566522598267}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.05593923479318619
+best ious mean 0.04866809397935867
+best ious mean 0.0325530469417572
+best ious mean 0.05961070954799652
+best ious mean 0.2547259032726288
+best ious mean 0.13076308369636536
+best ious mean 0.15509022772312164
+best ious mean 0.022617744281888008
+gt center sum metatensor(24., device='cuda:0')
+pos mask metatensor(72, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0442, 0.0577])
+n bbox pred samples 64
+Pair iou tensor([0.0972, 0.1862])
+n bbox pred samples 64
+Pair iou tensor([0.1642, 0.0926])
+n bbox pred samples 64
+Pair iou tensor([0.0252, 0.0182, 0.0551, 0.1498, 0.0008, 0.0283, 0.0014, 0.0033, 0.0270])
+n bbox pred samples 64
+Pair iou tensor([0.0971, 0.1115])
+n bbox pred samples 64
+Pair iou tensor([0.0392, 0.0438, 0.0505, 0.0937])
+n bbox pred samples 64
+Pair iou tensor([0.1079, 0.0505])
+n bbox pred samples 64
+Pair iou tensor([0.0699])
+bbox aux loss {'bbox_3d_loss': 3.7741100788116455, 'pos_loss': 0.45765456557273865, 'size_loss': 2.064943552017212, 'center_loss': 1.251512050628662}
+{'loss': 4.7346, 'grad_norm': 37.395389556884766, 'learning_rate': 2.916666666666667e-05, 'epoch': 0.06}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.10992647707462311
+best ious mean 0.3696087598800659
+best ious mean 0.10066282749176025
+best ious mean 0.23979979753494263
+best ious mean 0.07791347801685333
+best ious mean 0.09459594637155533
+best ious mean 0.15599724650382996
+best ious mean 0.15069302916526794
+gt center sum metatensor(30., device='cuda:0')
+pos mask metatensor(90, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.0010, 0.0629, 0.0625, 0.0647, 0.1153, 0.0669, 0.0631, 0.0595, 0.0014])
+n bbox pred samples 64
+Pair iou tensor([0.1394])
+n bbox pred samples 64
+Pair iou tensor([0.0628])
+n bbox pred samples 64
+Pair iou tensor([0.1029])
+n bbox pred samples 64
+Pair iou tensor([0.0722, 0.1331, 0.0819, 0.0756, 0.0484, 0.1080, 0.0399])
+n bbox pred samples 64
+Pair iou tensor([0.0606, 0.2150, 0.0700, 0.0816])
+n bbox pred samples 64
+Pair iou tensor([0.1725, 0.0734])
+n bbox pred samples 64
+Pair iou tensor([0.1273, 0.0199, 0.0407, 0.0218, 0.0320, 0.0083])
+bbox aux loss {'bbox_3d_loss': 3.097369909286499, 'pos_loss': 0.38908231258392334, 'size_loss': 1.6464027166366577, 'center_loss': 1.0618847608566284}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.18231141567230225
+best ious mean 0.16387107968330383
+best ious mean 0.1266387701034546
+best ious mean 0.12243138253688812
+best ious mean 0.08013666421175003
+best ious mean 0.15907041728496552
+best ious mean 0.3902605175971985
+best ious mean 0.08621393889188766
+gt center sum metatensor(27., device='cuda:0')
+pos mask metatensor(81, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.1962])
+n bbox pred samples 64
+Pair iou tensor([0.1279, 0.1223])
+n bbox pred samples 64
+Pair iou tensor([0.1832, 0.1425])
+n bbox pred samples 64
+Pair iou tensor([0.0714, 0.0008, 0.1237, 0.0506, 0.2192, 0.0010, 0.0180, 0.0667, 0.1100])
+n bbox pred samples 64
+Pair iou tensor([0.0876, 0.0571, 0.3507, 0.0115, 0.0006, 0.0821, 0.0019, 0.0015, 0.0014])
+n bbox pred samples 64
+Pair iou tensor([0.0735, 0.1913, 0.1183, 0.0559])
+n bbox pred samples 64
+Pair iou tensor([0.1790, 0.0841])
+n bbox pred samples 64
+Pair iou tensor([0.0946, 0.0692, 0.0529])
+bbox aux loss {'bbox_3d_loss': 3.4489123821258545, 'pos_loss': 0.40496525168418884, 'size_loss': 1.9312621355056763, 'center_loss': 1.112685203552246}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.2623586058616638
+best ious mean 0.21130308508872986
+best ious mean 0.11019521951675415
+best ious mean 0.23976784944534302
+best ious mean 0.19659698009490967
+best ious mean 0.13589788973331451
+best ious mean 0.1814742237329483
+best ious mean 0.12983159720897675
+gt center sum metatensor(23., device='cuda:0')
+pos mask metatensor(69, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.2280])
+n bbox pred samples 64
+Pair iou tensor([0.1954])
+n bbox pred samples 64
+Pair iou tensor([0.0148, 0.0315, 0.0253, 0.0304])
+n bbox pred samples 64
+Pair iou tensor([0.1445])
+n bbox pred samples 64
+Pair iou tensor([0.1022, 0.0647, 0.1016, 0.2185, 0.1297, 0.0074, 0.0505, 0.0055, 0.0729])
+n bbox pred samples 64
+Pair iou tensor([0.2707])
+n bbox pred samples 64
+Pair iou tensor([0.1063, 0.3590, 0.2014, 0.0651])
+n bbox pred samples 64
+Pair iou tensor([0.0167, 0.0523, 0.1875])
+bbox aux loss {'bbox_3d_loss': 2.9471700191497803, 'pos_loss': 0.330675333738327, 'size_loss': 1.1922982931137085, 'center_loss': 1.4241963624954224}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.17852354049682617
+best ious mean 0.16166311502456665
+best ious mean 0.2538144588470459
+best ious mean 0.22415201365947723
+best ious mean 0.26077884435653687
+best ious mean 0.17501774430274963
+best ious mean 0.19060496985912323
+best ious mean 0.09487730264663696
+gt center sum metatensor(22., device='cuda:0')
+pos mask metatensor(66, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.1047, 0.0171, 0.0206, 0.0345])
+n bbox pred samples 64
+Pair iou tensor([0.1273])
+n bbox pred samples 64
+Pair iou tensor([0.1419])
+n bbox pred samples 64
+Pair iou tensor([0.1750])
+n bbox pred samples 64
+Pair iou tensor([0.2497, 0.1335, 0.2845])
+n bbox pred samples 64
+Pair iou tensor([0.1553, 0.2076])
+n bbox pred samples 64
+Pair iou tensor([0.0056, 0.0255, 0.0729, 0.0673, 0.0739, 0.0424, 0.0109, 0.0008, 0.0268])
+n bbox pred samples 64
+Pair iou tensor([0.0797, 0.3098])
+bbox aux loss {'bbox_3d_loss': 3.10581374168396, 'pos_loss': 0.3768483102321625, 'size_loss': 1.3255099058151245, 'center_loss': 1.4034556150436401}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.3033800721168518
+best ious mean 0.19996917247772217
+best ious mean 0.27015283703804016
+best ious mean 0.22875431180000305
+best ious mean 0.39516979455947876
+best ious mean 0.3704519271850586
+best ious mean 0.31712624430656433
+best ious mean 0.31044307351112366
+gt center sum metatensor(28., device='cuda:0')
+pos mask metatensor(84, device='cuda:0')
+n bbox pred samples 64
+Pair iou tensor([0.2603, 0.0280, 0.2758, 0.0872])
+n bbox pred samples 64
+Pair iou tensor([0.1421, 0.1139, 0.1280])
+n bbox pred samples 64
+Pair iou tensor([0.2249, 0.1605, 0.0620, 0.0801, 0.1231, 0.0121])
+n bbox pred samples 64
+Pair iou tensor([0.2020, 0.1200])
+n bbox pred samples 64
+Pair iou tensor([0.0676, 0.2862])
+n bbox pred samples 64
+Pair iou tensor([0.0061, 0.0053, 0.0828, 0.1694])
+n bbox pred samples 64
+Pair iou tensor([0.2468, 0.3285])
+n bbox pred samples 64
+Pair iou tensor([0.2039, 0.0775, 0.0386, 0.0493, 0.0309, 0.0372])
+bbox aux loss {'bbox_3d_loss': 2.0776078701019287, 'pos_loss': 0.3738187849521637, 'size_loss': 0.5351819396018982, 'center_loss': 1.1686069965362549}
+delta_xyz torch.Size([8, 4, 4, 4, 1, 3]) log_dwh torch.Size([8, 4, 4, 4, 1, 3]) center_pred torch.Size([8, 4, 4, 4]) targets torch.Size([8, 9, 6]) masks torch.Size([8, 9])
+best ious mean 0.2805405259132385
+best ious mean 0.4309609830379486
+best ious mean  4%|▎         | 14/375 [01:03<25:39,  4.26s/it]

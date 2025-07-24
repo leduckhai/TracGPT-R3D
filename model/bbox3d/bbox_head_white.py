@@ -10,56 +10,56 @@ load_dotenv()
 ROOT = os.getenv("ROOT")
 sys.path.append(ROOT)
 import torch
+import torch.nn.functional as F
 
 class AnchorBBox3DHeadV2(nn.Module):
-    def __init__(self,config,num_anchors=3,patch_grid=[4,4,4],embed_dim=768,in_channels=64):
+    def __init__(self,config,num_anchors=1,patch_grid=[4,4,4],embed_dim=768,in_channels=64):
+         # Stronger center prediction head
         super().__init__()
-        self.max_pred_per_patch=3
         self.num_anchors = num_anchors
-        self.downsample = nn.Conv3d(in_channels, in_channels, kernel_size=2, stride=2)
-        self.patch_grid=patch_grid
-        self.head_dim=self.max_pred_per_patch*7
-        self.reducer=nn.Sequential(
-            nn.Linear(768, 256), 
-            nn.ReLU(),           
-            nn.Linear(256, 1)    
+        self.patch_grid = patch_grid
+        self.center_head = nn.Sequential(
+            nn.Linear(embed_dim, 512),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 1)
         )
-        self.bbox_reducer=nn.Sequential(
-            nn.Linear(768, 256), 
-            nn.ReLU(),           
-            nn.Linear(256,  self.head_dim)    
+        
+        self.bbox_head = nn.Sequential(
+            nn.Linear(embed_dim, 512),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, num_anchors * 6)  
         )
-    
-
-
+        
+        self._init_weights()
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
     def forward(self, x):
-        # input: (B, 64,768)
-        head_dim=self.max_pred_per_patch*7
-        B,all_patches,embed = x.shape[0],x.shape[1],x.shape[2]  # Batch size
+        B = x.shape[0]
         
-        center_pred=torch.sigmoid(self.reducer(x)).squeeze(-1)   # [B, 64,1]
-        threshold = 0.45
-        # print()
-        # print("before",center_pred)
-        center_pred = torch.where(
-            center_pred > threshold,
-            torch.ones_like(center_pred),  # Values > threshold → 1
-            torch.zeros_like(center_pred)   # Values ≤ threshold → 0
-        )
-        # print("after",center_pred)
-        # print("unique value",torch.unique(center_pred))
-        center_pred=center_pred.reshape(B,self.patch_grid[0],self.patch_grid[1],self.patch_grid[2])
-        center_pred_bool=center_pred.bool()
-        # print("unique value",torch.unique(center_pred))
-
-        x_split=x.reshape(B,self.patch_grid[0],self.patch_grid[1],self.patch_grid[2],embed)
-        x_head=self.bbox_reducer(x_split)
-        x_head=x_head.view(B,x_head.shape[1],x_head.shape[2],x_head.shape[3],3,-1)
-        delta_xyz = torch.sigmoid(x_head[:, :,  :, :, :,:3]) * 2 - 0.5  # [2, 3, 3, 16, 32, 32]
-        log_dwh = x_head[:, :,  :, :, :,3:6]  # [2, 3, 3, 16, 32, 32]
-        conf = torch.sigmoid(x_head[:, :,  :, :, :,6])  # [2, 3, 16, 32, 32]
+        # Center prediction with temperature scaling
+        center_logits = self.center_head(x)  # [B, N, 1]
+        center_pred = torch.sigmoid(center_logits / 0.5).squeeze(-1)  # Sharpened
         
-        return center_pred_bool,delta_xyz,log_dwh,conf
+        bbox_params = self.bbox_head(x).view(B, *self.patch_grid, self.num_anchors, 6)
+        
+        delta_xyz = torch.tanh(bbox_params[..., :3])  # [-1,1] range
+        log_dwh = bbox_params[..., 3:6]  # Log-space dimensions
+        # conf_logits = bbox_params[..., 6]  # Confidence scores
+        
+        return center_pred.view(B, *self.patch_grid), delta_xyz, log_dwh
+       
     
 class AnchorBBox3DLossV2(nn.Module):
     def __init__(self,  pos_weight=1.0, neg_weight=0.5, lambda_reg=1.0):
@@ -69,91 +69,220 @@ class AnchorBBox3DLossV2(nn.Module):
         self.neg_weight = neg_weight
         self.lambda_reg = lambda_reg
         
-        self.reg_loss = nn.SmoothL1Loss(reduction='none')
-        self.conf_loss = nn.BCEWithLogitsLoss(reduction='none')  # Works with logits
-
-    def forward(self, delta_zxy, log_dwh, conf_pred, gt_boxes, masks):
-        """
-        Args:
-            delta_zxy: (B, D, H, W, N_boxes, 3) - Position offsets
-            log_dwh: (B, D, H, W, N_boxes, 3) - Log-dimensions
-            conf_pred: (B, D, H, W, N_boxes) - Confidence logits
-            gt_boxes: (B, max_objs, 6) - Normalized boxes (cx,cy,cz,w,h,d)
-            masks: (B,max_objs)
-        """
-        B, D, H, W, num_boxes, _ = delta_zxy.shape
+        self.reg_loss = nn.SmoothL1Loss(reduction='sum')
+        self.conf_loss = nn.BCEWithLogitsLoss(reduction='none')  
+        self.anchors=[]
+        self.num_anchors = 1
+        self.focal_loss = FocalLossSigmoid(gamma=2.0, alpha=0.75)
+        # self.focal_loss = StableFocalLoss(gamma=2.0, alpha=0.45)
+    def forward(self,center_pred, delta_zxy, log_dwh, gt_boxes, masks):
+        B, D, H, W, num_anchors, _ = delta_zxy.shape
         device = delta_zxy.device
-
-        # --- 1. Create grid centers ---
-        z_grid = torch.linspace(0.5/D, 1-0.5/D, D, device=device).view(1, D, 1, 1, 1)
-        y_grid = torch.linspace(0.5/H, 1-0.5/H, H, device=device).view(1, 1, H, 1, 1)
-        x_grid = torch.linspace(0.5/W, 1-0.5/W, W, device=device).view(1, 1, 1, W, 1)
-        """
-        Example: D = 4
-        Bins:
-
-        [0.0, 0.25], [0.25, 0.5], [0.5, 0.75], [0.75, 1.0].
-
-        Centers: [0.125, 0.375, 0.625, 0.875].
-
-        torch.linspace(0.5/4, 1-0.5/4, 4) → [0.125, 0.375, 0.625, 0.875]
-        """
+        
+        # Grid centers
+        z_grid = torch.linspace(0.5/D, 1-0.5/D, D, device=device).view(1,D,1,1,1)
+        y_grid = torch.linspace(0.5/H, 1-0.5/H, H, device=device).view(1,1,H,1,1)
+        x_grid = torch.linspace(0.5/W, 1-0.5/W, W, device=device).view(1,1,1,W,1)
+        
+        # Initialize targets
         pos_target = torch.zeros_like(delta_zxy)
         size_target = torch.zeros_like(log_dwh)
-        conf_target = torch.zeros_like(conf_pred)
-
+        gt_center = torch.zeros_like(center_pred)
+        
+        total_gt_boxes = 0
         for b in range(B):
-            gt = gt_boxes[b][masks[b]]  # (N_gt, 6)
-            
+            gt = gt_boxes[b][masks[b]]
+            # print("gt",gt )
+            total_gt_boxes += len(gt)
             if len(gt) == 0:
-                continue  
-
-            # Convert GT to grid indices
-            grid_z = (gt[:, 0] * D).clamp(0, D-1).long()
-            grid_y = (gt[:, 1] * H).clamp(0, H-1).long()
-            grid_x = (gt[:, 2] * W).clamp(0, W-1).long()
-
-            # Assign to all boxes at each spatial location
+                print("no gt")
+                continue
+                
+            grid_z = (gt[:,0] * D).clamp(0, D-1).long()
+            grid_y = (gt[:,1] * H).clamp(0, H-1).long()
+            grid_x = (gt[:,2] * W).clamp(0, W-1).long()
+            best_ious=[]
             for gt_idx in range(len(gt)):
                 z, y, x = grid_z[gt_idx], grid_y[gt_idx], grid_x[gt_idx]
+                pred_vol=   torch.exp(log_dwh[b,z,y,x,:] + 1e-6).squeeze()
+                # print("pred vol", pred_vol.shape,torch.exp(log_dwh[b,z,y,x,:]), gt[gt_idx,3:6]  )
+                gt_box = gt[gt_idx, 3:6].unsqueeze(0)
+                ious = calculate_3d_iou(gt_box, pred_vol)
+               
+                best_iou, best_box = ious.max(dim=1)
+                if best_box >= num_anchors:  
+                    print("invalid best box", best_box)
+                    continue
+                best_ious.append(best_iou)
+                    
+                gt_center[b,z,y,x] = 1
+                pos_target[b,z,y,x,best_box,0] = gt[gt_idx,0] - z_grid[0,z,0,0,0]
+                pos_target[b,z,y,x,best_box,1] = gt[gt_idx,1] - y_grid[0,0,y,0,0]
+                pos_target[b,z,y,x,best_box,2] = gt[gt_idx,2] - x_grid[0,0,0,x,0]
                 
-                # Position targets (offsets from grid centers)
-                pos_target[b, z, y, x, :, 0] = gt[gt_idx, 0] - z_grid[0, z, 0, 0, 0]  # dz
-                pos_target[b, z, y, x, :, 1] = gt[gt_idx, 1] - y_grid[0, 0, y, 0, 0]  # dy
-                pos_target[b, z, y, x, :, 2] = gt[gt_idx, 2] - x_grid[0, 0, 0, x, 0]  # dx
-                
-                # Size targets (log of dimensions)
-                size_target[b, z, y, x, :, 0] = torch.log(gt[gt_idx, 3] + 1e-6)  # log_w
-                size_target[b, z, y, x, :, 1] = torch.log(gt[gt_idx, 4] + 1e-6)  # log_h
-                size_target[b, z, y, x, :, 2] = torch.log(gt[gt_idx, 5] + 1e-6)  # log_d
-                
-                conf_target[b, z, y, x, :] = 1.0
-
-        # Regression mask (positive anchors)
-        reg_mask = conf_target > 0.5
+                size_target[b,z,y,x,best_box] = torch.log(gt[gt_idx,3:6] + 1e-6)
+            print("best ious mean", torch.tensor(best_ious).mean().item())
+        # print("total gt boxes", total_gt_boxes)
+        # print("center_pred stats", center_pred.min().item(), center_pred.max().item(),center_pred.mean().item(), center_pred.std())
+        print("gt center sum", gt_center.sum())
+        total_sum = 0
         
-        # Position loss
-        pos_loss = self.reg_loss(delta_zxy[reg_mask], pos_target[reg_mask]).sum()
+        center_loss = self.focal_loss(center_pred, gt_center)
         
-        # Size loss
-        size_loss = self.reg_loss(log_dwh[reg_mask], size_target[reg_mask]).sum()
+        pos_mask = gt_center.unsqueeze(-1).unsqueeze(-1).expand(-1,-1,-1,-1,  num_anchors,3).bool() 
+        print("pos mask",pos_mask.sum())
+        pos_loss = self.reg_loss(delta_zxy[pos_mask], pos_target[pos_mask])
+        size_loss = self.reg_loss(log_dwh[pos_mask], size_target[pos_mask])
         
-        # Confidence loss (weighted)
-        conf_loss = (self.conf_loss(conf_pred, conf_target) * 
-                   torch.where(conf_target > 0.5, self.pos_weight, self.neg_weight)).sum()
+        num_pos = max(1.0,gt_center.sum())
+        total_loss = (center_loss + pos_loss + size_loss) / num_pos
         
-        # Normalize by number of positive anchors
-        num_pos = max(1.0, reg_mask.float().sum())
-        
-        total_loss = (
-            self.lambda_reg * (pos_loss + size_loss) / num_pos +
-            conf_loss / num_pos
-        )
-
         return {
             'total_loss': total_loss,
-            'pos_loss': pos_loss / num_pos,
-            'size_loss': size_loss / num_pos,
-            'conf_loss': conf_loss / num_pos
+            'pos_loss': pos_loss/num_pos,
+            'size_loss': size_loss/num_pos,
+            'center_loss': center_loss/num_pos
         }
+
+def calculate_3d_iou(box1, box2):
+    """
+    Calculate 3D IoU between two sets of boxes
+    
+    Args:
+        box1: (N, 3) tensor of (width, height, depth)
+        box2: (M, 3) tensor of (width, height, depth)
         
+    Returns:
+        iou: (N, M) tensor of IoU values
+    """
+    # Expand dimensions for broadcasting
+    box1 = box1.unsqueeze(1)  # (N, 1, 3)
+    box2 = box2.unsqueeze(0)  # (1, M, 3)
+    
+    # Calculate volumes
+    vol1 = box1[..., 0] * box1[..., 1] * box1[..., 2]  # (N, 1)
+    vol2 = box2[..., 0] * box2[..., 1] * box2[..., 2]  # (1, M)
+    
+    # Find intersection dimensions
+    min_w = torch.min(box1[..., 0], box2[..., 0])  # (N, M)
+    min_h = torch.min(box1[..., 1], box2[..., 1])  # (N, M)
+    min_d = torch.min(box1[..., 2], box2[..., 2])  # (N, M)
+    
+    # Calculate intersection volume
+    intersection = min_w * min_h * min_d
+    intersection = torch.clamp(intersection, min=0)
+    
+    # Calculate union volume
+    union = vol1 + vol2 - intersection
+    
+    # Calculate IoU
+    iou = intersection / (union + 1e-6)
+    
+    return iou
+
+def sigmoid_focal_loss(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+    reduction: str = "none",
+) -> torch.Tensor:
+    """
+    Original implementation from 
+    https://github.com/facebookresearch/fvcore/blob/main/fvcore/nn/focal_loss.py
+    
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = 0.25.
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples. Default = 2.
+        reduction: 'none' | 'mean' | 'sum'
+                 'none': No reduction will be applied to the output.
+                 'mean': The output will be averaged.
+                 'sum': The output will be summed.
+    Returns:
+        Loss tensor with the reduction option applied.
+    """
+    # Original implementation: https://github.com/facebookresearch/fvcore/blob/master/fvcore/nn/focal_loss.py
+    p = torch.sigmoid(inputs)
+    ce_loss = F.binary_cross_entropy_with_logits(
+        inputs, targets, reduction="none"
+    )
+    p_t = p * targets + (1 - p) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    if reduction == "mean":
+        loss = loss.mean()
+    elif reduction == "sum":
+        loss = loss.sum()
+
+    return loss
+
+class FocalLossSigmoid(nn.Module):
+    def __init__(self, alpha=0.75, gamma=2.0, reduction='sum'):
+        super().__init__()
+        self.alpha = alpha       # Weight for foreground (higher = focus more on foreground)
+        self.gamma = gamma       # Penalty exponent (higher = harder on low-confidence predictions)
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        """
+        Args:
+            inputs: Predicted foreground probabilities (after sigmoid) [B, D, H, W]
+            targets: Ground truth (1=foreground, 0=background) [B, D, H, W]
+        """
+        targets = targets.float()
+
+        # Binary Cross-Entropy (since inputs are already sigmoided)
+        bce_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+
+        # Focal modulation: Focus on low-confidence foreground predictions
+        p_t = inputs * targets + (1 - inputs) * (1 - targets)  # p if foreground, 1-p if background
+        focal_loss = bce_loss * ((1 - p_t) ** self.gamma)
+
+        # Apply alpha weighting (higher alpha = focus more on foreground)
+        alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+        focal_loss = alpha_t * focal_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        return focal_loss
+
+class StableFocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0, topk_ratio=0.1):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.topk_ratio = topk_ratio
+
+    def forward(self, inputs, targets):
+        # 1. Select Top-K predictions
+        k = int(self.topk_ratio * inputs.numel())
+        topk_values, topk_indices = torch.topk(inputs.flatten(), k=k)
+        mask = torch.zeros_like(inputs)
+        mask.view(-1)[topk_indices] = 1
+
+        # 2. Compute focal loss only on Top-K
+        p = torch.sigmoid(inputs) * mask
+        bce_loss = F.binary_cross_entropy(p, targets * mask, reduction='none')
+        p_t = p * targets + (1 - p) * (1 - targets)
+        focal_loss = bce_loss * ((1 - p_t) ** self.gamma)
+
+        if self.alpha >= 0:
+            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            focal_loss = alpha_t * focal_loss
+
+        return focal_loss.sum()

@@ -81,9 +81,8 @@ class BboxAwareCollator:
             corner_bbox_data_ts= torch.tensor(corner_bbox_data, dtype=torch.float32)
             center_bbox_data_ts = corners_to_center(corner_bbox_data_ts)
             
-            positive_center_bbbox=center_bbox_data_ts
-            center_bbox_gts.append(positive_center_bbbox)  
-            positive_center = get_center(positive_center_bbbox, patch_grid=self.patch_grid)
+            center_bbox_gts.append(center_bbox_data_ts)  
+            positive_center = get_center(center_bbox_data_ts[bbox_mask], patch_grid=self.patch_grid)
             positive_centers.append(positive_center)
             corner_bbox_gts.append(corner_bbox_data_ts)
             
@@ -115,7 +114,7 @@ class BboxAwareCollator:
             'attention_masks': torch.stack(attention_masks),
             'positive_centers':torch.stack(positive_centers) if positive_centers else None,
             'labels': torch.stack(labels),
-            'center_bbox_gts': torch.stack(center_bbox_gts) if center_bbox_gts else None,
+            'center_bbox_gts': torch.stack( center_bbox_gts) if center_bbox_gts else None,
             'bbox_masks': torch.stack( bbox_masks),
             'position_ids': position_ids  ,
             'answer_types': answer_types,
