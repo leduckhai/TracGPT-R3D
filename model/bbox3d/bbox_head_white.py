@@ -48,14 +48,13 @@ class AnchorBBox3DHeadV2(nn.Module):
     def forward(self, x):
         B = x.shape[0]
         
-        # Center prediction with temperature scaling
         center_logits = self.center_head(x)  # [B, N, 1]
         center_pred = torch.sigmoid(center_logits / 0.5).squeeze(-1)  # Sharpened
         
         bbox_params = self.bbox_head(x).view(B, *self.patch_grid, self.num_anchors, 6)
         
-        delta_xyz = torch.tanh(bbox_params[..., :3])  # [-1,1] range
-        log_dwh = bbox_params[..., 3:6]  # Log-space dimensions
+        delta_xyz = torch.tanh(bbox_params[..., :3])  
+        log_dwh = bbox_params[..., 3:6]  
         # conf_logits = bbox_params[..., 6]  # Confidence scores
         
         return center_pred.view(B, *self.patch_grid), delta_xyz, log_dwh
@@ -122,9 +121,6 @@ class AnchorBBox3DLossV2(nn.Module):
                 
                 size_target[b,z,y,x,best_box] = torch.log(gt[gt_idx,3:6] + 1e-6)
             print("best ious mean", torch.tensor(best_ious).mean().item())
-        # print("total gt boxes", total_gt_boxes)
-        # print("center_pred stats", center_pred.min().item(), center_pred.max().item(),center_pred.mean().item(), center_pred.std())
-        print("gt center sum", gt_center.sum())
         total_sum = 0
         
         center_loss = self.focal_loss(center_pred, gt_center)
