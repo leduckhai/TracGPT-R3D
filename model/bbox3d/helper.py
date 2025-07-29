@@ -378,11 +378,11 @@ def compute_ious(bbox_preds, targets, masks, mode="minmax"):
     gt_boxes = targets[masks]
     if gt_boxes.size(0) == 0 or bbox_preds.size(0) == 0:
         return pairs
-
+    bbox_preds= torch.clamp(bbox_preds, min=0, max=1)
     if mode == "center":
         bbox_preds = center_to_minmax(bbox_preds)
         gt_boxes = center_to_minmax(gt_boxes)
-
+    bbox_preds= torch.clamp(bbox_preds, min=0, max=1)
     matches = hungarian_iou_matching(bbox_preds, gt_boxes)
 
     for pred_idx, gt_idx, iou in matches:

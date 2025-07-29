@@ -19,3 +19,6 @@ eval_result
 wandb
 output
 MedYOLO
+pseudo_3d
+gradient
+DATASET

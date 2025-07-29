@@ -5,18 +5,15 @@ import json
 import numpy as np
 from datasets import load_dataset
 from collections import defaultdict
-<<<<<<< Updated upstream
 import json 
 
-ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v6")
+ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v7-fix-rotated-image")
 output_folder="./clean_data"
 
 if os.path.exists(output_folder):
     shutil.rmtree(output_folder)
-=======
 from tqdm import tqdm
 import logging
->>>>>>> Stashed changes
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

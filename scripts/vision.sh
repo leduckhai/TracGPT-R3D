@@ -8,6 +8,9 @@ export WANDB_DIR=./output/wandb
 # Redirect stdout and stderr to a log file
 python main_vision.py \
     --version v0 \
+    --train_val_dir /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/0691cd9f-8dad-4005-811d-34fb610d4f88/train/data \
+    --dataset trac_white \
+
     --model_name_or_path TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --model_type tiny_llama \
     --lora_enable True \

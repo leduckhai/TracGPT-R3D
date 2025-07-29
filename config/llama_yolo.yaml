@@ -1,14 +1,21 @@
 tiny_llama:
+  dataset:
+    train_val_dir: 
+    type: trac_white
   vision_encoder:
     vision_tower_config: 
-      vision_tower: vit3d
-      img_size: [32, 256, 256]
-      patch_size: [8, 64, 64]
+      vision_tower: "cnn"
+      # out_channels: 768
+      out_channels: 256
       in_channels: 1
-      hidden_size: 768
-      num_heads: 8
-      vision_select_layer: -1
-      vision_select_feature: cls_patch
+
+      # img_size: [32, 256, 256]
+      # patch_size: [8, 64, 64]
+      # in_channels: 1
+      # hidden_size: 768
+      # num_heads: 8
+      # vision_select_layer: -1
+      # vision_select_feature: cls_patch
 
     projector:
       image_size: [32, 256, 256]

@@ -21,6 +21,12 @@ def build_vision_tower(config):
             vision_select_layer=config.vision_select_layer,
             vision_select_feature=config.vision_select_feature
         )
+    elif 'cnn' in config.vision_tower.lower():
+        from model.Encoder.cnn import CNNEncoder
+        return CNNEncoder(
+            in_channels=config.in_channels,
+            out_channels=config.out_channels
+        )
     else:
         raise ValueError(f'Unknown vision tower: {vision_tower}')
     

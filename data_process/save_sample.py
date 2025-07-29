@@ -3,10 +3,11 @@ import os
 import pickle
 import nibabel as nib
 import shutil
-
+import sys 
+sys.path.append("/root/TracGPT-R3D")
 from data_process.util import draw_3d_bbox_filled,draw_3d_bbox_wireframe,convert_list_slice_paths_to_3d,save_nifti
 def process():
-    sample_file="/root/VLMTrac/chunks/train/data/OAS1_0075.json"
+    sample_file="/root/VLMTrac/chunks/train/data/OAS1_0134.json"
     img_annot_dir="/root/VLMTrac/2d_data/train/image_with_bboxes"
     with open(sample_file,"r") as f:
         data=json.load(f)
@@ -49,7 +50,7 @@ def process():
       
         save_nifti(grount_truth,f"test_gt_{i}_{n_concat}.nii.gz")
         save_nifti(bboxes_colors,f"test_pred_{i}_{n_concat}.nii.gz")
-
+        break
 def process_sample(image,bboxes,shape=(32,256,256)):
    
         

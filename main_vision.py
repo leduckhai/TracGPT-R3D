@@ -1,17 +1,12 @@
 import os
-import logging
 import argparse
 import torch
-import torch.nn.functional as F
 from transformers import AutoTokenizer
 from collator import BboxAwareCollator
 from torch.utils.data import DataLoader
-from transformers import TrainerCallback
 from data.dataloader import load_data
 from transformers import TrainingArguments
-from model.LanguageModel.Trac_llama import TracLlamaForCausalLM, TracLlamaConfig
 from eval import evaluate, evaluate_single
-from trainer import TracTrainer
 import wandb
 import numpy as np
 from datetime import datetime
@@ -19,13 +14,11 @@ from model.LanguageModel.Vision_white import TracVisionModel, TracVisionConfig
 from vision_trainer import TracVisionTrainer
 now = datetime.now()
 
-# Format as D-M-Y--H-M-S
 date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
 wandb.init(
     project="TracGPT",
     name=f"Trac_llama-{date_time_string}",
 )
-# Disable distributed training detection
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
 os.environ["WORLD_SIZE"] = "1"
@@ -40,7 +33,8 @@ def create_data_args():
     """Create data arguments namespace"""
     args = argparse.Namespace()
     args.data_root = "./Data/data/"
-
+    args.train_val_dir = "/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/0691cd9f-8dad-4005-811d-34fb610d4f88/train/data"
+    args.dataset="trac_white"
     # caption data
     args.cap_data_path = "./Data/data/M3D_Cap_npy/M3D_Cap.json"
 
@@ -75,19 +69,20 @@ def set_up_lora(model, training_args):
         modules_to_save=["embed_tokens", "lm_head"]
     )
 
-    # Apply LoRA
     model = get_peft_model(model, lora_config)
 
-    # Verify parameters
     trainable_params, all_params = model.get_nb_trainable_parameters()
     print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
-        
+
+def create_model_args():
+    args=argparse.Namespace()
+    args.vision_backbone="resnet"    
+    args.collator="white"
     
 def create_training_args():
     """Create training arguments namespace"""
     args = argparse.Namespace()
 
-    # lora
     args.lora_enable = True
     args.lora_r = 16
     args.lora_alpha = 32
@@ -115,7 +110,8 @@ def create_training_args():
     args.save_strategy = "steps"
     args.save_steps = 1000
     args.save_total_limit = 1
-    args.learning_rate = 5e-5
+    # args.learning_rate = 5e-5
+    args.learning_rate = 1e-4
     args.weight_decay = 0.0
     args.warmup_ratio = 0.03
     args.lr_scheduler_type = "cosine"
@@ -201,16 +197,30 @@ def find_all_linear_names(model):
             lora_module_names.add(name)
     return list(lora_module_names)
 
-def print_trainable_params(model):
+def print_trainable_params(model, verbose=True):
+    total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total trainable params: {trainable_params}")
-    print("Trainable layers:")
-    for name, param in model.named_parameters():
-        if param.requires_grad: 
-            print(f"\t{name}")
-    return trainable_params  # Return the count for potential further use
-
-# Usage
+    
+    if verbose:
+        print(f"{'Layer name':<60} {'Trainable params':>20} {'% Trainable':>15}")
+        print("-" * 100)
+        
+        for name, param in model.named_parameters():
+            num_params = param.numel()
+            if param.requires_grad:
+                trainable = "✓"
+                percent = num_params / trainable_params * 100
+                print(f"{name:<60} {num_params:>20,} {percent:>14.2f}%")
+            else:
+                if verbose > 1:  # Only show frozen layers if verbose > 1
+                    print(f"{name:<60} {'0':>20} {'(frozen)':>15}")
+    
+    print("\nSummary:")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,} ({trainable_params/total_params:.1%})")
+    print(f"Frozen parameters: {total_params - trainable_params:,} ({(total_params - trainable_params)/total_params:.1%})")
+    
+    return trainable_params, total_params
 
 def parse_arguments():
     """Enhanced argument parser with all new parameters"""
@@ -313,7 +323,7 @@ def parse_arguments():
         "--save_total_limit", type=int, default=1, help="Save total limit"
     )
     parser.add_argument(
-        "--learning_rate", type=float, default=5e-5, help="Learning rate"
+        "--learning_rate", type=float, default=1e-4, help="Learning rate"
     )
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay")
     parser.add_argument("--warmup_ratio", type=float, default=0.03, help="Warmup ratio")
@@ -347,44 +357,22 @@ def parse_arguments():
 
     return parser.parse_args()
 
-
-class NaNDetectionCallback(TrainerCallback):
-    def on_step_end(self, args, state, control, **kwargs):
-        # Check model parameters for NaN
-        model = kwargs.get('model')
-        if model:
-            for name, param in model.named_parameters():
-                if torch.isnan(param).any():
-                    print(f"NaN detected in parameter {name} at step {state.global_step}")
-                    control.should_training_stop = True
-                    return control
-                if param.grad is not None and torch.isnan(param.grad).any():
-                    print(f"NaN detected in gradient of {name} at step {state.global_step}")
-                    control.should_training_stop = True
-                    return control
-        
-        return control
     
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        # This is where logs are available
-        if logs and 'train_loss' in logs:
-            if torch.isnan(torch.tensor(logs['train_loss'])):
-                print(f"NaN loss at step {state.global_step}: {logs}")
-                control.should_training_stop = True
-        return control
-def main():
-    cmd_args = parse_arguments()
 
-    # Create argument namespaces
+def main():
+    
+    cmd_args = parse_arguments()
+    model_args=create_model_args()
     data_args = create_data_args()
     training_args = create_training_args()
-    print("data_args:", data_args)
+
     print("training_args:", training_args)
 
     torch.manual_seed(training_args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(training_args.seed)
-
+    print("MODEL ARGS:",model_args)
+    
     print_info("=" * 20 + " Enhanced Training Setup " + "=" * 20)
     print_info(f"Device: {training_args.device}")
     print_info(f"Base Model{cmd_args.model_name_or_path} ")
@@ -401,8 +389,7 @@ def main():
     print_info("=" * 20 + " Tokenizer preparation " + "=" * 20)
     tokenizer = AutoTokenizer.from_pretrained(
         cmd_args.model_name_or_path,
-        # padding_side="right",
-        # use_fast=False,
+
     )
 
     special_tokens = [
@@ -410,28 +397,30 @@ def main():
         "<end>",
     ]
     image_token_name = "<im_patch>"
-    end_token = "<end>"
     num_added = tokenizer.add_tokens(special_tokens)
 
     print(f"Added {num_added} special tokens", len(tokenizer))
-
-    collator = BboxAwareCollator(
-        tokenizer=tokenizer,
-        max_length=cmd_args.model_max_length,
-        max_bbox_length=9,
-        num_vision_token=256,
-        token_name=image_token_name,
-    )
+    if model_args.collator=="bbox":
+        
+        collator = BboxAwareCollator(
+            tokenizer=tokenizer,
+            max_length=cmd_args.model_max_length,
+            max_bbox_length=9,
+            num_vision_token=256,
+            token_name=image_token_name,
+            one_bbox=True
+        )
+    elif model_args.collator=="white":
+        from collator import WhiteCollator
+        collator=WhiteCollator()
+    else:
+        raise NotImplementedError
+    
     train_set, val_set, test_set = load_data(bbox_only=True)
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))
-    # train_loader = DataLoader(
-    #     train_set,
-    #     batch_size=training_args.per_device_test_batch_size,
-    #     collate_fn=collator,
-    #     pin_memory=cmd_args.dataloader_pin_memory,
-    # )
+ 
     test_loader = DataLoader(
         test_set,
         batch_size=training_args.per_device_test_batch_size,
@@ -439,10 +428,15 @@ def main():
         pin_memory=cmd_args.dataloader_pin_memory,
     )
 
-    img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
-    config = TracLlamaConfig(vocab_size=len(tokenizer), img_token_id=img_token_id)
-    
-    model=TracVisionModel()
+    # img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
+    if model_args.vision_backbone=="resnet":
+        from model.Encoder.resnet import ResNet18_3D
+        model=ResNet18_3D()
+    elif model_args.vision_backbone=="densenet":
+        from model.Encoder.densenet import DenseNet3D
+    else:
+        raise NotImplementedError
+    # model=TracVisionModel()
     print("trainable params", sum(p.numel() for p in model.parameters() if p.requires_grad))
     print("Layer grad",print_trainable_params(model))
     wandb.watch(
@@ -468,12 +462,12 @@ def main():
         model=model,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
-            max_grad_norm=1.0, 
+            # max_grad_norm=4.0, 
             per_device_train_batch_size=training_args.per_device_train_batch_size,
             per_device_eval_batch_size=training_args.per_device_eval_batch_size,
             num_train_epochs=training_args.num_train_epochs,
             logging_dir=os.path.join(training_args.output_dir, "logs"),
-            eval_strategy=training_args.evaluation_strategy,  # Changed from evaluation_strategy
+            # evaluation_strategy=training_args.evaluation_strategy, 
             eval_steps=(
                 int(training_args.eval_steps) if training_args.eval_steps else None
             ),
@@ -504,7 +498,7 @@ def main():
         tokenizer=tokenizer,
         data_collator=collator,
     )
-    torch.autograd.set_detect_anomaly(True, check_nan=True)
+    # torch.autograd.set_detect_anomaly(True, check_nan=True)
     trainer.train()
     print_info("Training complete!")
     print("evaluate")

@@ -13,29 +13,29 @@ import torch
 import torch.nn.functional as F
 
 class AnchorBBox3DHeadV2(nn.Module):
-    def __init__(self,config,num_anchors=1,patch_grid=[4,4,4],embed_dim=768,in_channels=64):
+    def __init__(self,config,num_anchors=1,patch_grid=[4,4,4],embed_dim=256,in_channels=64):
          # Stronger center prediction head
         super().__init__()
         self.num_anchors = num_anchors
         self.patch_grid = patch_grid
         self.center_head = nn.Sequential(
-            nn.Linear(embed_dim, 512),
+            nn.Linear(embed_dim, embed_dim//2),
             nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
+            nn.Linear(embed_dim//2, embed_dim//4),
+            nn.LayerNorm(embed_dim//4),
             nn.GELU(),
-            nn.Linear(256, 1)
+            nn.Linear(embed_dim//4, 1)
         )
         
         self.bbox_head = nn.Sequential(
-            nn.Linear(embed_dim, 512),
+            nn.Linear(embed_dim, embed_dim//2),
             nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
+            nn.Linear(embed_dim//2, embed_dim//4),
+            nn.LayerNorm(embed_dim//4),
             nn.GELU(),
-            nn.Linear(256, num_anchors * 6)  
+            nn.Linear(embed_dim//4, num_anchors * 6)  
         )
         
         self._init_weights()

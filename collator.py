@@ -5,8 +5,35 @@ from typing import List
 import numpy as np
 import torch.nn.functional as F
 from model.bbox3d.helper import corners_to_center,center_to_corners,get_center
+from collections import defaultdict
+
+
+status_map={
+    "Status (Non-Dementia)":0,
+    "Status (Mild-Dementia)":1,
+    "Status (Moderate-Dementia)":2
+}
+class WhiteCollator:
+   
+    def __call__(self, batch):
+        images=[]
+        bbox_criteria=defaultdict(list)
+        status_criteria=[]
+        for sample in batch:
+            images.append(sample['image'])
+            status_criteria.append(status_map[sample['A4']])
+            for metric,val in sample["A3"].items():
+                bbox_criteria[metric].append(val)
+                
+            
+        return {
+            "image":torch.stack(images),
+            "bbox_criteria":bbox_criteria,
+            "status_criteria":status_criteria
+        }
+    
 class BboxAwareCollator:
-    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>",patch_grid=[4,4,4]):
+    def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>",patch_grid=[4,4,4],one_bbox=False):
         self.patch_grid=patch_grid
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -14,6 +41,7 @@ class BboxAwareCollator:
         self.end_token = end_token
         self.image_tk_name=token_name
         self.image_tk = f"<image_context> {' '.join([token_name] * num_vision_token)} <image_context>"
+        self.one_bbox=one_bbox
     def pad_bboxes_to_fixed_size(self, bboxes: List[List[float]], target_size: int) -> List[List[float]]:
         """Pad or truncate bboxes to fixed size"""
         if len(bboxes) >= target_size:
@@ -62,6 +90,9 @@ class BboxAwareCollator:
             
             if sample['answer_type'] in ['bbox_3d'] and sample.get('bbox_3d') is not None:
                 corner_bbox_data = sample['bbox_3d']
+                if self.one_bbox:
+                    corner_bbox_data=corner_bbox_data[:1]
+                # full_text = f"Question: {sample['question']} Answer: {self.image_tk} Answer: {self.end_token}"
                 bbox_mask=self.create_bbox_attention_mask(len(corner_bbox_data  ), self.max_bbox_length)
                 corner_bbox_data= self.pad_bboxes_to_fixed_size( corner_bbox_data  , self.max_bbox_length)  # Pad to fixed size of 2 bboxes
     
@@ -139,21 +170,35 @@ class BboxAwareCollator:
 
 
 if __name__ == "__main__":
-    from transformers import AutoTokenizer
-    from torch.utils.data import DataLoader
-    tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-    img_token_name="<im_patch>"
-    tokenizer.add_tokens(img_token_name)
-    img_id= tokenizer.convert_tokens_to_ids(img_token_name)
-    print("img id",img_id)
-    for batch in dl:
-        images, input_ids, attention_mask, labels, bbox_gt, bbox_mask,position_ids = batch.values()
-        print("images shape:", images.shape)
-        print("input_ids shape:", input_ids.shape)
-        print("attention_mask shape:", attention_mask.shape)
-        print("labels shape:", labels.shape)
-        print("bbox_3d_mask shape:", bbox_mask.shape)
-        print("position_ids shape:", position_ids.shape)
-        print("input ids",input_ids)
-        print("input id", (input_ids==img_id).sum().item())
-        break
+    from data.dataloader import load_data
+    import torch
+    from torch.utils.data import Dataset, DataLoader 
+    # from transformers import AutoTokenizer
+    # from torch.utils.data import DataLoader
+    # tokenizer=AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    # img_token_name="<im_patch>"
+    # tokenizer.add_tokens(img_token_name)
+    # img_id= tokenizer.convert_tokens_to_ids(img_token_name)
+    # print("img id",img_id)
+    # for batch in dl:
+    #     images, input_ids, attention_mask, labels, bbox_gt, bbox_mask,position_ids = batch.values()
+    #     print("images shape:", images.shape)
+    #     print("input_ids shape:", input_ids.shape)
+    #     print("attention_mask shape:", attention_mask.shape)
+    #     print("labels shape:", labels.shape)
+    #     print("bbox_3d_mask shape:", bbox_mask.shape)
+    #     print("position_ids shape:", position_ids.shape)
+    #     print("input ids",input_ids)
+    #     print("input id", (input_ids==img_id).sum().item())
+    #     break
+    from data.dataloader import load_data
+    collator=WhiteCollator()
+    train_set, val_set, test_set = load_data(train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/26f67cb9-1efd-4a39-9eda-4fe15eb5127f/train/data",dataset="trac_white")
+    train_ld=DataLoader(train_set, batch_size=2, shuffle=True, collate_fn=collator)
+    for i, sample in enumerate(train_ld):
+        if i==3:
+            break
+        # print("sample",sample.keys(),sample["bbox_criteria"],sample["status_criteria"])
+        print("---------Sample Criteria",sample["status_criteria"])
+        print("---bbox criteria",sample["bbox_criteria"])
+        

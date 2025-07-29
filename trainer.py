@@ -91,10 +91,13 @@ class TracTrainer(Trainer):
         
         loss = super().training_step(model, filter_inputs, num_items_in_batch)
         
-        if self.state.global_step % self.gradient_log_freq == 0:
-            self.log_gradient_norms(model, self.state.global_step)
+    # if self.state.global_step % self.gradient_log_freq == 0:
+        # gradient_path=f"gradient.txt"
+        # print("Saving gradient stats to", gradient_path)
+        # print_gradient_stats_to_file(model, self.state.global_step,gradient_path)
+            # self.log_gradient_norms(model, self.state.global_step)
             
-            self.log_gradient_histograms(model, self.state.global_step)
+            # self.log_gradient_histograms(model, self.state.global_step)
         
         with torch.no_grad(): 
             outputs = model(
@@ -165,3 +168,7 @@ class TracTrainer(Trainer):
         self.state.global_step += 1
         return eval_loop_output
     
+
+
+# Call during training
+# print_gradient_stats(model)

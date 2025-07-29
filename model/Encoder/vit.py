@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-from transformers import ViTModel, ViTConfig
 from collections.abc import Sequence
 
 import torch

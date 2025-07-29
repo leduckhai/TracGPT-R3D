@@ -32,7 +32,7 @@ class VisionEncoder(nn.Module):
                 self.vision_tower_config,
             )
             print("Vision tower built successfully.")
-            self.mm_projector = build_mm_projector(self.mm_projector_config)
+            # self.mm_projector = build_mm_projector(self.mm_projector_config)
 
     def encode_images(self, images: torch.Tensor) -> Optional[torch.Tensor]:
         """Encode images to features"""
