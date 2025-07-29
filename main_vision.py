@@ -2,16 +2,16 @@ import os
 import argparse
 import torch
 from transformers import AutoTokenizer
-from collator import BboxAwareCollator
+from src.collator import BboxAwareCollator
 from torch.utils.data import DataLoader
-from data.dataloader import load_data
+from src.data.dataloader import load_data
 from transformers import TrainingArguments
 from eval import evaluate, evaluate_single
 import wandb
 import numpy as np
 from datetime import datetime
-from model.LanguageModel.Vision_white import TracVisionModel, TracVisionConfig
-from vision_trainer import TracVisionTrainer
+from src.model.LanguageModel.Vision_white import TracVisionModel, TracVisionConfig
+from src.trainer.vision_trainer import TracVisionTrainer
 now = datetime.now()
 
 date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
@@ -58,7 +58,6 @@ def set_up_lora(model, training_args):
     lora_module_names = find_all_linear_names(model)
     # print(f"LoRA target modules: {lora_module_names}")
 
-    # Configure LoRA
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -430,10 +429,10 @@ def main():
 
     # img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
     if model_args.vision_backbone=="resnet":
-        from model.Encoder.resnet import ResNet18_3D
+        from src.model.Encoder.resnet import ResNet18_3D
         model=ResNet18_3D()
     elif model_args.vision_backbone=="densenet":
-        from model.Encoder.densenet import DenseNet3D
+        from src.model.Encoder.densenet import DenseNet3D
     else:
         raise NotImplementedError
     # model=TracVisionModel()
