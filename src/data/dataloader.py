@@ -20,10 +20,6 @@ import numpy as np
 import json
 from monai.transforms import Compose, ResizeD, EnsureChannelFirstD, SqueezeDimD
 from monai.transforms import ScaleIntensityRanged
-
-from src.data_process.save_sample import process_sample
-
-
 class TracDatasetWhite(Dataset):
     def __init__(
         self,
@@ -77,13 +73,7 @@ class TracDatasetWhite(Dataset):
         self.img_dir = image_path
 
         self.qa_banks = []
-        qa_maps = {
-            "Q1": "A1",
-            "Q2": "A2",
-            "Q3": "A3",
-            "Q4": "A4",
-        }
-        print("data path",data_paths)
+     
         for path in data_paths:
             
             with open(path, "r") as f:
@@ -253,10 +243,10 @@ def load_data(
     ]
     print("data paths", len(data_paths))
     train_paths, test_paths = train_test_split(
-        data_paths, test_size=0.2, random_state=42
+        data_paths, test_size=0.1, random_state=42
     )
     train_paths, val_paths = train_test_split(
-        train_paths, test_size=0.2, random_state=42
+        train_paths, test_size=0.1, random_state=42
     )
     train_set = dataset(
         data_paths=train_paths,
@@ -279,32 +269,34 @@ if __name__ == "__main__":
 
     # train_set, val_set, test_set = load_data()
     train_set, val_set, test_set = load_data(
-        train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/0691cd9f-8dad-4005-811d-34fb610d4f88/train/data",
+        train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data",
         dataset="trac_white",
     )
+    print("len trainset",len(train_set),len(val_set))
     for i, sample in enumerate(train_set):
         if i == 3:
             break
-        slice_order = sample["slice_order"]
-        patient_id = sample["Patient_ID"]
-        Q1 = sample["Q1"]
-        A1 = sample["A1"]
-        Q2 = sample["Q2"]
-        A2 = sample["A2"]
-        Q3 = sample["Q3"]
-        A3 = sample["A3"]
-        Q4 = sample["Q4"]
-        A4 = sample["A4"]
-        print("patient id", patient_id)
-        print("slice order", slice_order)
-        print("Q1", Q1)
-        print("A1", A1)
-        print("Q2", Q2)
-        print("A2", A2)
-        print("Q3", Q3)
-        print("A3", A3)
-        print("Q4", Q4)
-        print("A4", A4)
-        image = sample["image"]
-        image = np.array(image.squeeze(0))
-        print("image shape", image.shape, image.min(), image.max())
+        print(sample.keys())
+        # slice_order = sample["slice_order"]
+        # patient_id = sample["Patient_ID"]
+        # Q1 = sample["Q1"]
+        # A1 = sample["A1"]
+        # Q2 = sample["Q2"]
+        # A2 = sample["A2"]
+        # Q3 = sample["Q3"]
+        # A3 = sample["A3"]
+        # Q4 = sample["Q4"]
+        # A4 = sample["A4"]
+        # print("patient id", patient_id)
+        # print("slice order", slice_order)
+        # print("Q1", Q1)
+        # print("A1", A1)
+        # print("Q2", Q2)
+        # print("A2", A2)
+        # print("Q3", Q3)
+        # print("A3", A3)
+        # print("Q4", Q4)
+        # print("A4", A4)
+        # image = sample["image"]
+        # image = np.array(image.squeeze(0))
+        # print("image shape", image.shape, image.min(), image.max())

@@ -1,0 +1,51 @@
+data:
+  data_root: "./data/"
+  dataset: "trac_white"
+  train_val_split: 0.8
+  train_val_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data
+  train_sample: 20
+  val_sample: 20
+  test_sample: 20
+  dataloader_pin_memory: False
+  
+
+general:
+  max_eval: 4
+
+model:
+  tags: [resnet]
+  vision_backbone: "resnet"
+  collator: "white"
+  lora_enable: false
+  lora_r: 16
+  lora_alpha: 32
+
+training:
+  output_dir: "./output"
+  per_device_train_batch_size: 12
+  per_device_eval_batch_size: 12
+  num_train_epochs: 3
+  logging_dir: "./logs"  
+  eval_strategy: "steps"
+  eval_steps: 200
+  logging_steps: 50
+  save_strategy: "steps"
+  save_steps: 200
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: false
+  dataloader_num_workers: 4
+  save_total_limit: 2
+  load_best_model_at_end: true
+  report_to: wandb
+  remove_unused_columns: false
+  seed: 42
+  fp16: False
+  bf16: False
+  metric_for_best_model: eval_loss
+  greater_is_better: False
+  save_safetensors: False
+  dataloader_pin_memory: False

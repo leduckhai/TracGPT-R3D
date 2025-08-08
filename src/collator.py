@@ -22,7 +22,6 @@ class WhiteCollator:
         images = []
         bbox_metrics = defaultdict(list)
         status_targets = []
-        
         for sample in batch:
             images.append(sample['image'])
             status_targets.append(status_map[sample['A4']])
@@ -198,13 +197,16 @@ if __name__ == "__main__":
     #     print("input id", (input_ids==img_id).sum().item())
     #     break
     collator=WhiteCollator()
-    train_set, val_set, test_set = load_data(train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/26f67cb9-1efd-4a39-9eda-4fe15eb5127f/train/data",dataset="trac_white",train_sample=-1,val_sample=-1,test_sample=-1)
-    print("len train set",len(train_set))
+    # train_set, val_set, test_set = load_data(train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data",dataset="trac_white",train_sample=-1,val_sample=-1,test_sample=-1)
+    train_set, val_set, test_set = load_data(train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data",dataset="trac_white",train_sample=10,val_sample=10,test_sample=10)
+    print("len train set",len(train_set), "len val set",len(val_set),"len test_set",len(test_set))
     train_ld=DataLoader(train_set, batch_size=8, shuffle=True, collate_fn=collator)
     for i, sample in enumerate(train_ld):
-        pass
-        # if i==3:
-        #     break
+        
+    #     pass
+        if i==3:
+            break
+        print("sample",sample)
         # print("sample",sample.keys(),sample["bbox_criteria"],sample["status_criteria"])
         # print("sample",sample["bbox_GCA"],sample["bbox_Koedam"],sample["bbox_MTA"],sample["status_criteria"])
         

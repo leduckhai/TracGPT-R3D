@@ -94,11 +94,16 @@ def process_data():
 
         patient_json_files = os.listdir(source_data)
         p_ids = [path.split(".")[0] for path in patient_json_files]
-
-        for p_id in tqdm(p_ids):
+        print("Total p_ids",len(p_ids))
+        total_data=0
+        for i, p_id in enumerate(tqdm(p_ids)):
             with open(os.path.join(source_data, f"{p_id}.json"), "rb") as f:
                 data = json.load(f)
-
+            print(f"Len data for {p_id}",len(data))
+            total_data+=len(data)
+            slide_shape_map = {}
+            annot_shape_map = {}
+            slide_data_map = {}
             for d in data:
                 for k in drop_keys:
                     if k in d:
@@ -112,13 +117,10 @@ def process_data():
             annot_slide_dir = os.path.join(source_annot, p_id)
 
             slide_base = [f.split(".")[0] for f in os.listdir(img_slide_dir)]
+
             slide_subgroups = group_files(slide_base)
-            print("group files",group_files)
-            slide_shape_map = {}
-            annot_shape_map = {}
-            slide_data_map = {}
-
-
+            for i,group in enumerate(slide_subgroups):
+                print("Paitent id",p_id," Lenght group",len(group))
             patient_chunks = []
             for i, subgroup in enumerate(slide_subgroups):
 
@@ -146,6 +148,7 @@ def process_data():
                 keep_slides = [
                     s for s in subgroup if slide_shape_map[s].shape == reference_shape
                 ]
+                print("Number of invalid oriented slides",len(subgroup)-len(keep_slides))
 
                 if num_concat == -1:
 
@@ -153,17 +156,19 @@ def process_data():
                     chunk_data = merge_slices(chunk_slides, slide_data_map)
                     patient_chunks.append(chunk_data)
                 else:
-                    for i in range(0, len(keep_slides), num_concat):
+                    for i in range(0, len(keep_slides) - num_concat+1):
                         chunk_slides = keep_slides[i : i + num_concat]
-                        if len(chunk_slides) < num_concat:
-                            continue
+                        # if len(chunk_slides) < num_concat:
+                        #     continue
                         chunk_data = merge_slices(chunk_slides, slide_data_map)
                         patient_chunks.append(chunk_data)
 
-            print("call save")
+            # print("call save")
             with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
                 json.dump(patient_chunks, f)
-            return 
+            # if i==3:
+            #     return 
+        print("total data",total_data)
     print("target_root", target_root)
 
 

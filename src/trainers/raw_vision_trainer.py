@@ -79,44 +79,47 @@ class RawVisionTrainer(Trainer):
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
         print("Evaluating")
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
-            
+        total_loss = 0.0
+        num_batches = 0
+
         model = self.model.eval()
         for inputs in tqdm(eval_dataloader, desc="Evaluating"):
             with torch.no_grad():
-                images=inputs.get("images").to(model.device)
-                bbox_GCA=inputs.get("bbox_GCA").to(model.device)
-                bbox_Koedam=inputs.get("bbox_Koedam").to(model.device)
-                bbox_MTA=inputs.get("bbox_MTA").to(model.device)
-                status_criteria=inputs.get("status_criteria")
-                outputs=model(images )
-                subtask_out,finaltask_out=outputs
-                bbox_GCA_pred=subtask_out[:,0,:].squeeze(1)
-                bbox_Koedam_pred=subtask_out[:,1,:].squeeze(1)
-                bbox_MTA_pred=subtask_out[:,2,:].squeeze(1)
-                status_pred=finaltask_out.squeeze(1)
-                loss,metric_loss = self.compute_model_loss( bbox_GCA,bbox_Koedam,bbox_MTA,status_criteria,outputs)     
-                bbox_GCA_metric=self.eval_metric_tracker.calculate_metrics_bbox_criteria("GCA",bbox_GCA_pred,bbox_GCA)
-                bbox_Koedam_metric=self.eval_metric_tracker.calculate_metrics_bbox_criteria("Koedam",bbox_Koedam_pred,bbox_Koedam)
-                bbox_MTA_metric=self.eval_metric_tracker.calculate_metrics_bbox_criteria("MTA",bbox_MTA_pred,bbox_MTA)
-                bbox_status_metric=self.eval_metric_tracker.calculate_metrics_bbox_criteria("Status",status_pred,status_criteria)
-            
+                images = inputs.get("images").to(model.device)
+                bbox_GCA = inputs.get("bbox_GCA").to(model.device)
+                bbox_Koedam = inputs.get("bbox_Koedam").to(model.device)
+                bbox_MTA = inputs.get("bbox_MTA").to(model.device)
+                status_criteria = inputs.get("status_criteria")
+                outputs = model(images)
+                subtask_out, finaltask_out = outputs
+                loss, metric_loss = self.compute_model_loss(bbox_GCA, bbox_Koedam, bbox_MTA, status_criteria, outputs)
+
+                total_loss += loss.item()
+                num_batches += 1
+
+                bbox_GCA_metric = self.eval_metric_tracker.calculate_metrics_bbox_criteria("GCA", subtask_out[:,0,:].squeeze(1), bbox_GCA)
+                bbox_Koedam_metric = self.eval_metric_tracker.calculate_metrics_bbox_criteria("Koedam", subtask_out[:,1,:].squeeze(1), bbox_Koedam)
+                bbox_MTA_metric = self.eval_metric_tracker.calculate_metrics_bbox_criteria("MTA", subtask_out[:,2,:].squeeze(1), bbox_MTA)
+                bbox_status_metric = self.eval_metric_tracker.calculate_metrics_bbox_criteria("Status", finaltask_out.squeeze(1), status_criteria)
+
                 if self.state.global_step % self.args.logging_steps == 0:
-                    log_dict={
-                        
-                        "val/bbox_GCA_loss":metric_loss["GCA"].item(),
-                        "val/bbox_Koedam_loss":metric_loss["Koedam"].item(),
-                        "val/bbox_MTA_loss":metric_loss["MTA"].item(),
-                        "val/status_loss":metric_loss["status"].item(),
-                        "val/bbox_GCA_metric":bbox_GCA_metric,
-                        "val/bbox_Koedam_metric":bbox_Koedam_metric,
-                        "val/bbox_MTA_metric":bbox_MTA_metric,
-                        "val/status_metric":bbox_status_metric
+                    log_dict = {
+                        f"{metric_key_prefix}/loss":loss.item(),
+                        f"{metric_key_prefix}/bbox_GCA_loss": metric_loss["GCA"].item(),
+                        f"{metric_key_prefix}/bbox_Koedam_loss": metric_loss["Koedam"].item(),
+                        f"{metric_key_prefix}/bbox_MTA_loss": metric_loss["MTA"].item(),
+                        f"{metric_key_prefix}/status_loss": metric_loss["status"].item(),
+                        f"{metric_key_prefix}/bbox_GCA_metric": bbox_GCA_metric,
+                        f"{metric_key_prefix}/bbox_Koedam_metric": bbox_Koedam_metric,
+                        f"{metric_key_prefix}/bbox_MTA_metric": bbox_MTA_metric,
+                        f"{metric_key_prefix}/status_metric": bbox_status_metric
                     }
                     self.tracker.log(log_dict, self.state.global_step)
-        for metric_name, metric_group_val in self.eval_metric_tracker.get_global_bbox_metrics().items():
-            print("Metric val",metric_name)
-            for metric_key,metric_val in metric_group_val.items():
-                print(metric_key,np.mean(metric_val)) 
-                self.tracker.log({f"val/mean_{metric_name}_{metric_key}":np.mean(metric_val)},self.state.global_step)
-        return 
 
+        mean_loss = total_loss / num_batches if num_batches > 0 else 0.0
+
+    
+        return {
+            f"{metric_key_prefix}_loss": mean_loss,  
+            **{f"{metric_key_prefix}_{k}": v for k, v in self.eval_metric_tracker.get_global_bbox_metrics().items()}  # Optional: Custom metrics
+        }
