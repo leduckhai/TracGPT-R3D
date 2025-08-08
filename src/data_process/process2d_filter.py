@@ -26,7 +26,6 @@ def fuzzy_contains(s, d, threshold=0.9):
     if len_d == 0:
         return True  # Empty string always matches
 
-    # Slide over the main string to find the best match
     best_ratio = 0
     for i in range(len(s) - len_d + 1):
         window = s[i : i + len_d]
@@ -38,14 +37,14 @@ def fuzzy_contains(s, d, threshold=0.9):
     return best_ratio >= threshold
 
 
-dsc_path = "data_process/desc.json"
+dsc_path = "/root/TracGPT-R3D/src/data_process/desc.json"
 with open(dsc_path, "r") as f:
     desc_map = json.load(f)
 
 uid = str(uuid.uuid4())
 num_concat = 32
 tag = "overlap"
-# this is the save directory
+
 source_root = "/root/VLMTrac/2d_data"
 target_root = "pseudo_3d"
 
@@ -97,19 +96,6 @@ def process_data():
         p_ids = [path.split(".")[0] for path in patient_json_files]
 
         for p_id in tqdm(p_ids):
-            os.makedirs(save_data_dir, exist_ok=True)
-
-            img_slide_dir = os.path.join(source_img, p_id)
-            annot_slide_dir = os.path.join(source_annot, p_id)
-
-            slide_base = [f.split(".")[0] for f in os.listdir(img_slide_dir)]
-            slide_subgroups = group_files(slide_base)
-
-            slide_shape_map = {}
-            annot_shape_map = {}
-
-            slide_data_map = {}
-
             with open(os.path.join(source_data, f"{p_id}.json"), "rb") as f:
                 data = json.load(f)
 
@@ -118,6 +104,20 @@ def process_data():
                     if k in d:
                         del d[k]
                 slide_data_map[d["Slide"]] = d
+                
+                
+            os.makedirs(save_data_dir, exist_ok=True)
+
+            img_slide_dir = os.path.join(source_img, p_id)
+            annot_slide_dir = os.path.join(source_annot, p_id)
+
+            slide_base = [f.split(".")[0] for f in os.listdir(img_slide_dir)]
+            slide_subgroups = group_files(slide_base)
+            print("group files",group_files)
+            slide_shape_map = {}
+            annot_shape_map = {}
+            slide_data_map = {}
+
 
             patient_chunks = []
             for i, subgroup in enumerate(slide_subgroups):
@@ -163,12 +163,11 @@ def process_data():
             print("call save")
             with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
                 json.dump(patient_chunks, f)
-
+            return 
     print("target_root", target_root)
 
 
 def merge_A3_data(list_A3):
-    # result = defaultdict(int)
     result = {"GCA": 0, "Koedam": 0, "MTA": 0}
     if not list_A3:
         return ""
@@ -300,18 +299,4 @@ def merge_slices(list_slices, slice_data_map):
 
 
 if __name__ == "__main__":
-
-    # sample_file = "/home/ducnguyen/sync_local/repo/TracGPT/clean_data/train/data/OAS1_0002.json"
-    # with open(sample_file, "r") as f:
-    #     data = json.load(f)
-    # slides = [data["Slide"] for data in data]
-    # slides = sort_files(slides)
-    # slide_map = {}
-    # for d in data:
-    #     for k in drop_keys:
-    #         if k in d:
-    #             del d[k]
-    #     slide_map[d["Slide"]] = d
-    # sample = slides[:50]
-    # merge_slices(sample, slide_map)
     process_data()

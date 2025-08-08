@@ -120,17 +120,7 @@ def process_data():
                 save_annot_nifti_path=os.path.join(save_annot_subdir, f"{chunk_idx}.nii.gz")
                 with open(save_img_path, "wb") as f:
                     pickle.dump(image_3d, f)
-                # with open(save_annot_path, "wb") as f:
-                #     pickle.dump(annot_3d, f)
-                # with open(save_pick_slides_path, "w") as f:
-                    # json.dump(keep_slides, f)
-
-                # nifti_img = nib.Nifti1Image(image_3d, affine=np.eye(4))
-                # nib.save(nifti_img, save_img_nifti_path)
-
-                # nifti_img = nib.Nifti1Image(annot_3d, affine=np.eye(4))
-                # nib.save(nifti_img, save_annot_nifti_path)
-
+             
             data_path=os.path.join(source_data,f"{p_id}.json")
             with open(data_path, "r") as f:
                 data=json.load(f)

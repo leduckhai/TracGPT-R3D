@@ -10,9 +10,7 @@ class MetricTracker:
         self.global_status_metrics=defaultdict(list)
         self.global_metrics={}
     def get_global_bbox_metrics(self):
-        return self.global_bbox_metrics
-    def get_global_status_metrics(self):
-        return self.global_status_metrics
+        return self.global_metrics
     
 
         
@@ -23,22 +21,17 @@ class MetricTracker:
         y_true: torch.Tensor,
         average: str = 'macro'
     ) -> Dict[str, Dict[str, float]]:
-    #    y_pred_numpy (8, 3) y_true_numpy (8,)
-        print("y_pred",y_pred.shape,"y_true",y_true.shape)
-        print("y_pred",y_pred,"y_true",y_true)
-        y_true_numpy = y_true.detach().cpu().numpy().flatten()
+        y_true_numpy = y_true.detach().long().cpu().numpy().flatten()
     
         # Handle predictions
         if y_pred.ndim == 2:  # Logits/probabilities
             y_pred_numpy = torch.argmax(y_pred, dim=-1).cpu().numpy()
         else:  # Already class indices
             y_pred_numpy = y_pred.detach().cpu().numpy()
-        
-        # Determine metric type
+        # print("y_true numpy",y_true_numpy,"y_pred numpy",y_pred_numpy)
         n_classes = len(np.unique(y_true_numpy))
-        avg_method = 'binary' if n_classes <= 2 else average
+        avg_method =  average
         
-        # Calculate metrics
         metrics = {
             'accuracy': accuracy_score(y_true_numpy, y_pred_numpy),
             'precision': precision_score(y_true_numpy, y_pred_numpy, 
@@ -53,6 +46,8 @@ class MetricTracker:
         for key, value in metrics.items():
             if metric_name not in self.global_metrics:
                 self.global_metrics[metric_name] ={}
+            if key not in self.global_metrics[metric_name]:
+                self.global_metrics[metric_name][key] = []
             self.global_metrics[metric_name][key].append(value)
         
         return metrics

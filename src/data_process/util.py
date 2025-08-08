@@ -18,6 +18,9 @@ def rgb_to_grayscale(img_rgb):
 
 
 def group_files(file_list):
+    """"
+    
+    """
     group=defaultdict(list)
     sorted = sort_files(file_list)
     for f in sorted:

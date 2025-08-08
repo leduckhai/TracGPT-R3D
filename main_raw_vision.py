@@ -13,13 +13,8 @@ from datetime import datetime
 from src.trainers.raw_vision_trainer import RawVisionTrainer
 from src.model.Encoder.resnet import ResNet18_3D
 from src.collator import WhiteCollator
-now = datetime.now()
+from src.trainers.tracker import WandbTracker
 
-date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
-wandb.init(
-    project="TracGPT",
-    name=f"Trac_llama-{date_time_string}",
-)
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
 os.environ["WORLD_SIZE"] = "1"
@@ -34,10 +29,8 @@ def create_data_args():
     """Create data arguments namespace"""
     args = argparse.Namespace()
     args.data_root = "./Data/data/"
-    # args.train_val_dir = "/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/0691cd9f-8dad-4005-811d-34fb610d4f88/train/data"
     args.dataset="trac_white"
     args.train_val_dir = "/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/26f67cb9-1efd-4a39-9eda-4fe15eb5127f/train/data"
-
 
     return args
 
@@ -198,7 +191,6 @@ def parse_arguments():
         description="Medical LLM Training with Enhanced Parameters"
     )
 
-    # parser.add_argument("--trainer")
     parser.add_argument("--version", type=str, default="v0", help="Model version")
     parser.add_argument(
         "--model_name_or_path",
@@ -301,7 +293,7 @@ def parse_arguments():
     parser.add_argument(
         "--lr_scheduler_type", type=str, default="cosine", help="LR scheduler type"
     )
-    parser.add_argument("--logging_steps", type=float, default=4, help="Logging steps")
+    parser.add_argument("--logging_steps", type=float, default=8, help="Logging steps")
     parser.add_argument(
         "--gradient_checkpointing",
         type=lambda x: x.lower() == "true",
@@ -358,35 +350,13 @@ def main():
     print_info(f"Dataloader Workers: {training_args.dataloader_num_workers}")
 
     print_info("=" * 20 + " Tokenizer preparation " + "=" * 20)
-    tokenizer = AutoTokenizer.from_pretrained(
-        cmd_args.model_name_or_path,
-
-    )
-
-    special_tokens = [
-        "<im_patch>",
-        "<end>",
-    ]
-    image_token_name = "<im_patch>"
-    num_added = tokenizer.add_tokens(special_tokens)
-
-    print(f"Added {num_added} special tokens", len(tokenizer))
-    if model_args.collator=="bbox":
-        
-        collator = BboxAwareCollator(
-            tokenizer=tokenizer,
-            max_length=cmd_args.model_max_length,
-            max_bbox_length=9,
-            num_vision_token=256,
-            token_name=image_token_name,
-            one_bbox=True
-        )
-    elif model_args.collator=="white":
+    if model_args.collator=="white":
         collator=WhiteCollator()
     else:
         raise NotImplementedError
     
-    train_set, val_set, test_set = load_data(train_val_dir=data_args.train_val_dir,dataset=data_args.dataset)
+    # train_set, val_set, test_set = load_data(train_val_dir=data_args.train_val_dir,dataset=data_args.dataset, train_sample=5,val_sample=5)
+    train_set, val_set, test_set = load_data(train_val_dir=data_args.train_val_dir,dataset=data_args.dataset, train_sample=-1,val_sample=-1,test_sample=-1)
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))
@@ -398,19 +368,12 @@ def main():
         pin_memory=cmd_args.dataloader_pin_memory,
 
     )
-       
-    # print("collator",collator)
-    # train_loader=DataLoader(
-    #     train_set,
-    #     batch_size=training_args.per_device_train_batch_size,
-    #     shuffle=True,
-    #     collate_fn=collator,
-    #     # pin_memory=cmd_args.dataloader_pin_memory,
-    # )
-    # for i, batch in enumerate(train_loader):
-    #     print("batch",i,batch["images"].shape,batch["status_criteria"].shape,batch["bbox_Koedam"].shape,batch["bbox_GCA"].shape,batch["bbox_MTA"].shape)
-    #     if i==10:
-    #         break
+    if cmd_args.report_to == "wandb":
+        tracker=WandbTracker()
+    else:
+        tracker=None
+
+    print_info("=" * 20 + " Model preparation " + "=" * 20)
     if model_args.vision_backbone=="resnet":
         model=ResNet18_3D()
     # elif model_args.vision_backbone=="densenet":
@@ -438,6 +401,7 @@ def main():
                
     trainer = RawVisionTrainer(
         model=model,
+        tracker=tracker,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
             # max_grad_norm=4.0, 
@@ -456,16 +420,16 @@ def main():
             # bf16=training_args.bf16,
             fp16=False, 
             bf16=False,  
-            learning_rate=training_args.learning_rate,  # Added learning_rate
-            weight_decay=training_args.weight_decay,  # Added weight_decay
-            warmup_ratio=training_args.warmup_ratio,  # Added warmup_ratio
-            lr_scheduler_type=training_args.lr_scheduler_type,  # Added lr_scheduler_type
-            gradient_accumulation_steps=training_args.gradient_accumulation_steps,  # Added gradient_accumulation_steps
-            gradient_checkpointing=training_args.gradient_checkpointing,  # Added gradient_checkpointing
-            dataloader_num_workers=training_args.dataloader_num_workers,  # Added dataloader_num_workers
-            save_total_limit=training_args.save_total_limit,  # Added save_total_limit
+            learning_rate=training_args.learning_rate,  
+            weight_decay=training_args.weight_decay,  
+            warmup_ratio=training_args.warmup_ratio, 
+            lr_scheduler_type=training_args.lr_scheduler_type,  
+            gradient_accumulation_steps=training_args.gradient_accumulation_steps, 
+            gradient_checkpointing=training_args.gradient_checkpointing,  
+            dataloader_num_workers=training_args.dataloader_num_workers,  
+            save_total_limit=training_args.save_total_limit,  
             load_best_model_at_end=training_args.load_best_model_at_end,
-            # report_to=["wandb"],
+            report_to=training_args.report_to,
             remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
             seed=training_args.seed,  
             save_safetensors=False,
@@ -473,7 +437,7 @@ def main():
         ),
         train_dataset=train_set,
         eval_dataset=val_set,
-        tokenizer=tokenizer,
+        # tokenizer=tokenizer,
         data_collator=collator,
     )
     # torch.autograd.set_detect_anomaly(True, check_nan=True)
@@ -481,9 +445,7 @@ def main():
     print_info("Training complete!")
     print("evaluate")
     metrics = trainer.evaluate()
-    print(f"Loss: {metrics['eval_loss']}")
-    print(f"IoU: {metrics['eval_iou']}")
-
+    tracker.on_train_end()
     # evaluate(
     #     model=model,
     #     data_loader=test_loader,
