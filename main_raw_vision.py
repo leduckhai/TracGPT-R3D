@@ -6,12 +6,13 @@ from src.collator import BboxAwareCollator
 from torch.utils.data import DataLoader
 from src.data.dataloader import load_data
 from transformers import TrainingArguments
-from eval import evaluate, evaluate_single
+# from eval import evaluate, evaluate_single
 import wandb
 import numpy as np
 from datetime import datetime
-from src.model.LanguageModel.Vision_white import TracVisionModel, TracVisionConfig
-from src.trainer.vision_trainer import TracVisionTrainer
+from src.trainers.raw_vision_trainer import RawVisionTrainer
+from src.model.Encoder.resnet import ResNet18_3D
+from src.collator import WhiteCollator
 now = datetime.now()
 
 date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
@@ -33,50 +34,20 @@ def create_data_args():
     """Create data arguments namespace"""
     args = argparse.Namespace()
     args.data_root = "./Data/data/"
-    args.train_val_dir = "/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/0691cd9f-8dad-4005-811d-34fb610d4f88/train/data"
+    # args.train_val_dir = "/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/0691cd9f-8dad-4005-811d-34fb610d4f88/train/data"
     args.dataset="trac_white"
-    # caption data
-    args.cap_data_path = "./Data/data/M3D_Cap_npy/M3D_Cap.json"
+    args.train_val_dir = "/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/26f67cb9-1efd-4a39-9eda-4fe15eb5127f/train/data"
 
-    # VQA data
-    args.vqa_data_train_path = "./Data/data/M3D-VQA/M3D_VQA_train.csv"
-    args.vqa_data_val_path = "./Data/data/M3D-VQA/M3D_VQA_val.csv"
-    args.vqa_data_test_path = "./Data/data/M3D-VQA/M3D_VQA_test.csv"
-    args.vqa_yn_data_train_path = "./Data/data/M3D-VQA/M3D_VQA_yn_train.csv"
-
-    # positioning & segmentation data
-    args.seg_data_path = "./Data/data/M3D_Seg_npy/"
-    args.refseg_data_train_path = "./Data/data/M3D_RefSeg_npy/M3D_RefSeg.csv"
-    args.refseg_data_test_path = "./Data/data/M3D_RefSeg_npy/M3D_RefSeg_test.csv"
 
     return args
 
-
-def set_up_lora(model, training_args):
-    print_info("Setting up LoRA...")
-    from peft import LoraConfig, get_peft_model, TaskType
-    lora_module_names = find_all_linear_names(model)
-    # print(f"LoRA target modules: {lora_module_names}")
-
-    lora_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        target_modules=lora_module_names,
-        lora_dropout=0.05,
-        bias="lora_only",
-        task_type=TaskType.CAUSAL_LM,
-        modules_to_save=["embed_tokens", "lm_head"]
-    )
-
-    model = get_peft_model(model, lora_config)
-
-    trainable_params, all_params = model.get_nb_trainable_parameters()
-    print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
 
 def create_model_args():
     args=argparse.Namespace()
     args.vision_backbone="resnet"    
     args.collator="white"
+    return args
+    
     
 def create_training_args():
     """Create training arguments namespace"""
@@ -227,6 +198,7 @@ def parse_arguments():
         description="Medical LLM Training with Enhanced Parameters"
     )
 
+    # parser.add_argument("--trainer")
     parser.add_argument("--version", type=str, default="v0", help="Model version")
     parser.add_argument(
         "--model_name_or_path",
@@ -352,6 +324,7 @@ def parse_arguments():
     parser.add_argument(
         "--report_to", type=str, default="wandb", help="Reporting platform"
     )
+    # parser.add_argument
 
     return parser.parse_args()
 
@@ -370,7 +343,7 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed(training_args.seed)
     print("MODEL ARGS:",model_args)
-    
+    print("DATA ARGS",data_args)
     print_info("=" * 20 + " Enhanced Training Setup " + "=" * 20)
     print_info(f"Device: {training_args.device}")
     print_info(f"Base Model{cmd_args.model_name_or_path} ")
@@ -409,12 +382,11 @@ def main():
             one_bbox=True
         )
     elif model_args.collator=="white":
-        from collator import WhiteCollator
         collator=WhiteCollator()
     else:
         raise NotImplementedError
     
-    train_set, val_set, test_set = load_data(bbox_only=True)
+    train_set, val_set, test_set = load_data(train_val_dir=data_args.train_val_dir,dataset=data_args.dataset)
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))
@@ -424,25 +396,37 @@ def main():
         batch_size=training_args.per_device_test_batch_size,
         collate_fn=collator,
         pin_memory=cmd_args.dataloader_pin_memory,
-    )
 
-    # img_token_id = tokenizer.convert_tokens_to_ids(image_token_name)
+    )
+       
+    # print("collator",collator)
+    # train_loader=DataLoader(
+    #     train_set,
+    #     batch_size=training_args.per_device_train_batch_size,
+    #     shuffle=True,
+    #     collate_fn=collator,
+    #     # pin_memory=cmd_args.dataloader_pin_memory,
+    # )
+    # for i, batch in enumerate(train_loader):
+    #     print("batch",i,batch["images"].shape,batch["status_criteria"].shape,batch["bbox_Koedam"].shape,batch["bbox_GCA"].shape,batch["bbox_MTA"].shape)
+    #     if i==10:
+    #         break
     if model_args.vision_backbone=="resnet":
-        from src.model.Encoder.resnet import ResNet18_3D
         model=ResNet18_3D()
-    elif model_args.vision_backbone=="densenet":
-        from src.model.Encoder.densenet import DenseNet3D
+    # elif model_args.vision_backbone=="densenet":
+    #     from src.model.Encoder.densenet import DenseNet3D
     else:
         raise NotImplementedError
-    # model=TracVisionModel()
     print("trainable params", sum(p.numel() for p in model.parameters() if p.requires_grad))
     print("Layer grad",print_trainable_params(model))
-    wandb.watch(
-        model,
-        log="all",       # Logs gradients + parameters
-        log_freq=10,     # Log every 10 steps
-        log_graph=True,  # Optional: Log computation graph
-    )
+    wandb_mode=False
+    if wandb_mode:
+        wandb.watch(
+            model,
+            log="all",       # Logs gradients + parameters
+            log_freq=10,     # Log every 10 steps
+            log_graph=True,  # Optional: Log computation graph
+        )
 
     if cmd_args.freeze_backbone:
         print_info("Freezing backbone...")
@@ -450,13 +434,9 @@ def main():
 
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
-
-    # if training_args.lora_enable:
-    #     set_up_lora(model, training_args)
-
     model.to(training_args.device)
                
-    trainer = TracVisionTrainer(
+    trainer = RawVisionTrainer(
         model=model,
         args=TrainingArguments(
             output_dir=training_args.output_dir,
@@ -474,8 +454,8 @@ def main():
             save_steps=training_args.save_steps,
             # fp16=training_args.fp16,
             # bf16=training_args.bf16,
-            fp16=False,  # Disable if currently True
-            bf16=False,  # Disable if currently True
+            fp16=False, 
+            bf16=False,  
             learning_rate=training_args.learning_rate,  # Added learning_rate
             weight_decay=training_args.weight_decay,  # Added weight_decay
             warmup_ratio=training_args.warmup_ratio,  # Added warmup_ratio
@@ -485,7 +465,7 @@ def main():
             dataloader_num_workers=training_args.dataloader_num_workers,  # Added dataloader_num_workers
             save_total_limit=training_args.save_total_limit,  # Added save_total_limit
             load_best_model_at_end=training_args.load_best_model_at_end,
-            report_to=["wandb"],
+            # report_to=["wandb"],
             remove_unused_columns=training_args.remove_unused_columns,  # Added remove_unused_columns
             seed=training_args.seed,  
             save_safetensors=False,
@@ -504,12 +484,12 @@ def main():
     print(f"Loss: {metrics['eval_loss']}")
     print(f"IoU: {metrics['eval_iou']}")
 
-    evaluate(
-        model=model,
-        data_loader=test_loader,
-        tokenizer=tokenizer,
-        save_path="generate_output",
-    )
+    # evaluate(
+    #     model=model,
+    #     data_loader=test_loader,
+    #     tokenizer=tokenizer,
+    #     save_path="generate_output",
+    # )
     # Save the final model
     print_info(f"Model saved to {training_args.output_dir}")
 

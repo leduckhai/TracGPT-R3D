@@ -4,7 +4,9 @@ import torch.nn as nn
 from typing import List
 import numpy as np
 import torch.nn.functional as F
-from model.bbox3d.helper import corners_to_center,center_to_corners,get_center
+import sys 
+sys.path.append("/root/TracGPT-R3D")
+from src.model.bbox3d.helper import corners_to_center,center_to_corners,get_center
 from collections import defaultdict
 
 
@@ -13,25 +15,29 @@ status_map={
     "Status (Mild-Dementia)":1,
     "Status (Moderate-Dementia)":2
 }
+
+
 class WhiteCollator:
-   
     def __call__(self, batch):
-        images=[]
-        bbox_criteria=defaultdict(list)
-        status_criteria=[]
+        images = []
+        bbox_metrics = defaultdict(list)
+        status_targets = []
+        
         for sample in batch:
             images.append(sample['image'])
-            status_criteria.append(status_map[sample['A4']])
-            for metric,val in sample["A3"].items():
-                bbox_criteria[metric].append(val)
-                
-            
-        return {
-            "image":torch.stack(images),
-            "bbox_criteria":bbox_criteria,
-            "status_criteria":status_criteria
+            status_targets.append(status_map[sample['A4']])
+            for metric, val in sample["A3"].items():
+                bbox_metrics[metric].append(val)
+        
+        processed = {
+            "images": torch.stack(images),  # [B, C, H, W]
+            "status_criteria": torch.tensor(status_targets).long()  # [B]
         }
-    
+        
+        for metric, values in bbox_metrics.items():
+            processed[f"bbox_{metric}"] = torch.tensor(values).float()  # [B, ...]
+        
+        return processed
 class BboxAwareCollator:
     def __init__(self, tokenizer, max_length=512, max_bbox_length=9, num_vision_token=256,token_name="<image>",end_token="<end>",patch_grid=[4,4,4],one_bbox=False):
         self.patch_grid=patch_grid
@@ -191,14 +197,12 @@ if __name__ == "__main__":
     #     print("input ids",input_ids)
     #     print("input id", (input_ids==img_id).sum().item())
     #     break
-    from data.dataloader import load_data
     collator=WhiteCollator()
     train_set, val_set, test_set = load_data(train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/26f67cb9-1efd-4a39-9eda-4fe15eb5127f/train/data",dataset="trac_white")
-    train_ld=DataLoader(train_set, batch_size=2, shuffle=True, collate_fn=collator)
+    train_ld=DataLoader(train_set, batch_size=8, shuffle=True, collate_fn=collator)
     for i, sample in enumerate(train_ld):
-        if i==3:
-            break
+        # if i==3:
+        #     break
         # print("sample",sample.keys(),sample["bbox_criteria"],sample["status_criteria"])
-        print("---------Sample Criteria",sample["status_criteria"])
-        print("---bbox criteria",sample["bbox_criteria"])
+        print("sample",sample["bbox_GCA"],sample["bbox_Koedam"],sample["bbox_MTA"],sample["status_criteria"])
         

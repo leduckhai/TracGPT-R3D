@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split
 load_dotenv()
 ROOT = os.getenv("ROOT")
 sys.path.append(ROOT)
-from data_process.util import convert_list_slice_paths_to_3d
+from src.data_process.util import convert_list_slice_paths_to_3d
 import monai.transforms as mtf
 import os
 import numpy as np
@@ -20,7 +20,7 @@ import json
 from monai.transforms import Compose, ResizeD,EnsureChannelFirstD,SqueezeDimD
 from monai.transforms import ScaleIntensityRanged
 
-from data_process.save_sample import process_sample
+from src.data_process.save_sample import process_sample
 
 class TracDatasetWhite(Dataset):
     def __init__(
@@ -291,50 +291,4 @@ if __name__ == "__main__":
         print("image shape", image.shape, image.min(), image.max())
         
 
-    #     # print("train set")
-    #     slice_order = sample["slice_order"]
-    #     patient_id = sample["Patient_ID"]
-    #     # question = sample["question"]
-    #     # answer = sample["answer"]
-    #     # answer_type = sample["answer_type"]
-    #     print("patient id", patient_id)
-    #     print("slice order", slice_order)
-    #     bbox_3d = sample["bbox_3d"]
-    #     image = sample["image"]
-    #     image=np.array(image.squeeze(0))
-    #     print("image shape", image.shape, image.min(), image.max())
-    #     process_sample(image,bbox_3d)
-    #     break
-    # for i, sample in enumerate(val_set):
-    #     print("val set")
-    #     # slice_order = sample["slice_order"]
-    #     # patient_id = sample["Patient_ID"]
-    #     # question = sample["question"]
-    #     # answer = sample["answer"]
-    #     # answer_type = sample["answer_type"]
-    #     bbox_3d = sample["bbox_3d"]
-    #     image = sample["image"]
-    #     # process_sample(image,bbox_3d)
-    #     print("image shape", image.shape, image.min(), image.max())
-    #     # print("answer type", answer_type)
-    #     # print("question", question)
-    #     # print("answer", answer)
-    #     # print("bbox", bbox_3d)
-    #     # if i == 3:
-    #     break
-    # for i, sample in enumerate(test_set):
-    #     print("test set")
-    #     # slice_order = sample["slice_order"]
-    #     # patient_id = sample["Patient_ID"]
-    #     # question = sample["question"]
-    #     # answer = sample["answer"]
-    #     # answer_type = sample["answer_type"]
-    #     # bbox_3d = sample["bbox_3d"]
-    #     image = sample["image"]
-    #     print("image shape", image.shape, image.min(), image.max())
-    #     # print("answer type", answer_type)
-    #     # print("question", question)
-    #     # print("answer", answer)
-    #     # print("bbox", bbox_3d)
-    #     # if i == 3:
-    #     break
+ 

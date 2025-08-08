@@ -3,7 +3,6 @@ import sys
 sys.path.append(".")
 
 from transformers import AutoConfig, AutoModel
-from transformers.modeling_outputs import BaseModelOutput
 import torch
 import torch.nn as nn
 from dataclasses import dataclass
@@ -13,11 +12,10 @@ import yaml
 from model.Encoder.encoder import build_vision_tower
 from model.Projector.projector import build_mm_projector
 from utils.type import dict_to_namespace
-from dataclasses import dataclass
 from model.bbox3d.helper import compute_ious
 from model.bbox3d.builder import BBox3DPredictor
 from model.bbox3d.bbox_decoder import BBox3DDecoder
-
+from src.model.LanguageModel.model_output import TracVisionModelOutput
 class VisionEncoder(nn.Module):
     """Handles vision encoding and projection"""
 
@@ -46,14 +44,6 @@ class VisionEncoder(nn.Module):
         return image_features
 
 
-@dataclass
-class TracVisionModelOutput(BaseModelOutput):
-    loss: Optional[torch.FloatTensor] = None
-    logits: Optional[torch.FloatTensor] = None
-    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    attentions: Optional[Tuple[torch.FloatTensor]] = None
-    aux_loss: Optional[Dict[str, torch.FloatTensor]] = None
-    predicts:Optional[torch.FloatTensor] = None
 class TracVisionConfig(AutoConfig):
     model_type = "TracVision"
     
