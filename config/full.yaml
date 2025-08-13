@@ -3,15 +3,20 @@ data:
   dataset: "trac_white"
   train_val_split: 0.8
   train_val_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data
+  test_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data
+  image_train_path: /root/VLMTrac/2d_data/train/image
+  image_test_path: /root/VLMTrac/2d_data/test/image
   train_sample: -1
   val_sample: -1
   test_sample: -1
   dataloader_pin_memory: False
   
 
-support:
-  dataloader_pin_memory: True
+general:
+  max_eval: 1
+
 model:
+  tags: [resnet]
   vision_backbone: "resnet"
   collator: "white"
   lora_enable: false
@@ -20,8 +25,8 @@ model:
 
 training:
   output_dir: "./output"
-  per_device_train_batch_size: 8
-  per_device_eval_batch_size: 8
+  per_device_train_batch_size: 12
+  per_device_eval_batch_size: 12
   num_train_epochs: 3
   logging_dir: "./logs"  
   eval_strategy: "steps"

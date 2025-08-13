@@ -226,40 +226,40 @@ class TracDataset(Dataset):
 
 def load_data(
     train_val_dir="/root/VLMTrac/chunks/train/data",
-    image_path="/root/VLMTrac/2d_data/train/image",
-    bbox_only=False,
+    test_dir="/root/VLMTrac/chunks/train/data",
+    image_train_path="/root/VLMTrac/2d_data/train/image",
+    image_test_path="/root/VLMTrac/2d_data/test/image",
     dataset="trac",
-    train_sample=1000,
-    val_sample=500,
-    test_sample=100,
+    train_sample=-1,
+    val_sample=-1,
+    test_sample=-1,
 ):
     if dataset == "trac":
         dataset = TracDataset
     elif dataset == "trac_white":
         dataset = TracDatasetWhite
 
-    data_paths = [
+    train_data_paths = [
         os.path.join(train_val_dir, record) for record in os.listdir(train_val_dir)
     ]
-    print("data paths", len(data_paths))
-    train_paths, test_paths = train_test_split(
-        data_paths, test_size=0.1, random_state=42
-    )
+    test_data_paths=[
+        os.path.join(test_dir, record) for record in os.listdir(test_dir)
+    ]
+ 
     train_paths, val_paths = train_test_split(
-        train_paths, test_size=0.1, random_state=42
+        train_data_paths, test_size=0.1, random_state=42
     )
     train_set = dataset(
         data_paths=train_paths,
-        image_path=image_path,
+        image_path=image_train_path,
         mode="train",
         n_sample=train_sample,
-        bbox_only=bbox_only,
     )
     val_set = dataset(
-        data_paths=val_paths, image_path=image_path, mode="val", n_sample=val_sample
+        data_paths=val_paths, image_path=image_train_path, mode="val", n_sample=val_sample
     )
     test_set = dataset(
-        data_paths=test_paths, image_path=image_path, mode="test", n_sample=test_sample
+        data_paths=test_data_paths, image_path=image_test_path, mode="test", n_sample=test_sample
     )
     return train_set, val_set, test_set
 
@@ -270,12 +270,13 @@ if __name__ == "__main__":
     # train_set, val_set, test_set = load_data()
     train_set, val_set, test_set = load_data(
         train_val_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data",
+        test_dir="/root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data",
         dataset="trac_white",
     )
-    print("len trainset",len(train_set),len(val_set))
-    for i, sample in enumerate(train_set):
-        if i == 3:
-            break
+    print("len trainset",len(train_set),len(val_set),len(test_set))
+    for i, sample in enumerate(test_set):
+        # if i == 3:
+        #     break
         print(sample.keys())
         # slice_order = sample["slice_order"]
         # patient_id = sample["Patient_ID"]

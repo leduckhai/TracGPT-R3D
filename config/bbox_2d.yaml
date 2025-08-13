@@ -6,14 +6,15 @@ data:
   test_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data
   image_train_path: /root/VLMTrac/2d_data/train/image
   image_test_path: /root/VLMTrac/2d_data/test/image
-  train_sample: 20
-  val_sample: 20
-  test_sample: 20
+  train_sample: -1
+  val_sample: -1
+  test_sample: -1
   dataloader_pin_memory: False
   
 
 general:
-  max_eval: 5
+  max_eval: 1
+  trainer: bbox_trainer
 
 model:
   tags: [resnet]

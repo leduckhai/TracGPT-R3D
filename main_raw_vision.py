@@ -4,8 +4,6 @@ import torch
 from torch.utils.data import DataLoader
 from src.data.dataloader import load_data
 from transformers import TrainingArguments
-
-# from eval import evaluate, evaluate_single
 from datetime import datetime
 from src.trainers.raw_vision_trainer import RawVisionTrainer
 from src.model.Encoder.resnet import ResNet18_3D
@@ -17,25 +15,32 @@ import yaml
 import json
 from pathlib import Path
 from transformers import TrainingArguments
-# import datetime 
 from datetime import datetime
+from dataclasses import dataclass, field
+from typing import List
 
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
 os.environ["WORLD_SIZE"] = "1"
 
-
 def print_info(*args):
     """Simple print function"""
     print(*args)
 
-
+@dataclass
+class GeneralConfig:
+    max_eval: int=4
+    trainer: str="raw_vision"
+    
 @dataclass
 class DataConfig:
     data_root: str = "./data/"
     dataset: str = "trac_white"
     train_val_split: float = 0.8
     train_val_dir: str = ""
+    test_dir:str=""
+    image_train_path: str=""
+    image_test_path: str=""
     train_sample: int = -1
     val_sample: int = -1
     test_sample: int = -1
@@ -49,12 +54,9 @@ class ModelConfig:
     lora_enable: bool = False
     lora_r: int = 16
     lora_alpha: int = 32
-    tags: list=[]
+    tags: List[str] = field(default_factory=list) 
 
 
-# ======================
-# 2. CLI Argument Parsing
-# ======================
 def parse_cli_args():
     parser = argparse.ArgumentParser(description="Training Script")
 
@@ -74,14 +76,9 @@ def parse_cli_args():
 
     return parser.parse_args()
 
-
-# ======================
-# 3. Config Initialization
-# ======================
 def load_configs():
     now = datetime.now()
 
-    # Format as string (YYYY-MM-DD_HH-MM-SS)
     datetime_str = now.strftime("%Y-%m-%d_%H-%M-%S")
     cli_args = parse_cli_args()
     config_path = cli_args.config_path
@@ -91,6 +88,8 @@ def load_configs():
     data_config = DataConfig(**yaml_config["data"])
 
     model_config = ModelConfig(**yaml_config["model"])
+    general_config=GeneralConfig(**yaml_config["general"])
+    
     train_config = yaml_config["training"]
     train_config["logging_dir"] = os.path.join(train_config["output_dir"], "logs")
     train_config["learning_rate"]=float(train_config["learning_rate"])
@@ -98,7 +97,7 @@ def load_configs():
     print("OUTPUT DIR", train_config["output_dir"])
     training_config = TrainingArguments(**train_config)
 
-    return training_config, model_config, data_config
+    return training_config, model_config, data_config,general_config
 
 def save_configs(output_dir: str, training_config, model_config, data_config, cli_args):
     config = {
@@ -167,11 +166,12 @@ def print_trainable_params(model, verbose=True):
 
 def main():
 
-    training_config, model_config, data_config = load_configs()
+    training_config, model_config, data_config,general_config = load_configs()
     cli_args = parse_cli_args()
     print("TRAIN CONFIG", training_config)
     print("MODEL CONFIG", model_config)
     print("DATA CONFIG", data_config)
+    print("GENERAL CONFIG",general_config)
     save_configs(
         training_config.output_dir, training_config, model_config, data_config, cli_args
     )
@@ -185,9 +185,11 @@ def main():
         collator = WhiteCollator()
     else:
         raise NotImplementedError
-    # train_set, val_set, test_set = load_data(train_val_dir=data_config.train_val_dir,dataset=data_config.dataset, train_sample=5,val_sample=5)
     train_set, val_set, test_set = load_data(
         train_val_dir=data_config.train_val_dir,
+        test_dir=data_config.test_dir,
+        image_train_path=data_config.image_train_path,
+        image_test_path=data_config.image_test_path,
         dataset=data_config.dataset,
         train_sample=data_config.train_sample,
         val_sample=data_config.val_sample,
@@ -198,13 +200,8 @@ def main():
     print("val set", len(val_set))
     print("test set", len(test_set))
 
-    test_loader = DataLoader(
-        test_set,
-        batch_size=training_config.per_device_eval_batch_size,
-        collate_fn=collator,
-        pin_memory=data_config.dataloader_pin_memory,
-    )
     if training_config.report_to[0] == "wandb":
+        print("tags",model_config.tags)
         tracker = WandbTracker(tags=model_config.tags)
     else:
         raise NotImplementedError(f"Tracker is not match{training_config.report_to}")
@@ -226,18 +223,21 @@ def main():
         model.gradient_checkpointing_enable()
     model.to(training_config.device)
 
-    batch_size = training_config.per_device_train_batch_size * max(
-        1, training_config.n_gpu
-    )
-    train_dataset_size = len(train_set)
-    gradient_accumulation_steps = training_config.gradient_accumulation_steps or 1
+    if general_config.max_eval!=-1:
+        batch_size = training_config.per_device_train_batch_size * max(
+            1, training_config.n_gpu
+        )
+        train_dataset_size = len(train_set)
+        gradient_accumulation_steps = training_config.gradient_accumulation_steps or 1
 
-    steps_per_epoch = train_dataset_size // (batch_size * gradient_accumulation_steps)
+        steps_per_epoch = train_dataset_size // (batch_size * gradient_accumulation_steps)
 
-    eval_steps = max(1, steps_per_epoch // 4)
-    print("EVAL STEP",eval_steps)
-    training_config.eval_steps = eval_steps
-    training_config.save_steps = eval_steps
+        # print("batch size",batch_size, steps_per_epoch, train_dataset_size, gradient_accumulation_steps,gradient_accumulation_steps)
+        eval_steps = max(5, steps_per_epoch //  general_config.max_eval)
+    
+        print("EVAL STEP",eval_steps)
+        training_config.eval_steps = eval_steps
+        training_config.save_steps = eval_steps
     trainer = RawVisionTrainer(
         model=model,
         tracker=tracker,
@@ -250,15 +250,12 @@ def main():
     trainer.train()
     print_info("Training complete!")
     print("evaluate")
-    metrics = trainer.evaluate()
+    test_results = trainer.evaluate(
+    eval_dataset=test_set, 
+    metric_key_prefix="test"  
+)
     tracker.on_train_end()
-    # evaluate(
-    #     model=model,
-    #     data_loader=test_loader,
-    #     tokenizer=tokenizer,
-    #     save_path="generate_output",
-    # )
-    # Save the final model
+  
     print_info(f"Model saved to {training_config.output_dir}")
 
 
