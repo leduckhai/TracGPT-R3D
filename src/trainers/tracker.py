@@ -10,7 +10,9 @@ class WandbTracker:
         name=f"Trac_llama-{date_time_string}",
         tags=tags
     )
-        
+    def get_id(self):
+        return wandb.run.id
+    
     def log(self, log_dict, step):
         print(log_dict)
         wandb.log(log_dict, step=step)

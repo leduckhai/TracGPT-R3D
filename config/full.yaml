@@ -42,13 +42,13 @@ training:
   gradient_checkpointing: false
   dataloader_num_workers: 4
   save_total_limit: 2
-  load_best_model_at_end: true
+  # load_best_model_at_end: true
   report_to: wandb
   remove_unused_columns: false
   seed: 42
   fp16: False
   bf16: False
-  metric_for_best_model: eval_loss
+  # metric_for_best_model: eval_loss
   greater_is_better: False
   save_safetensors: False
   dataloader_pin_memory: False

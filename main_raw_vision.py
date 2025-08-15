@@ -1,13 +1,10 @@
 import os
 import argparse
 import torch
-from torch.utils.data import DataLoader
-from src.data.dataloader import load_data
+from src.dataset.dataloader import load_data
 from transformers import TrainingArguments
 from datetime import datetime
 from src.trainers.raw_vision_trainer import RawVisionTrainer
-from src.model.Encoder.resnet import ResNet18_3D
-from src.collator import WhiteCollator
 from src.trainers.tracker import WandbTracker
 import argparse
 from dataclasses import dataclass
@@ -18,29 +15,37 @@ from transformers import TrainingArguments
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List
+from src.utils.printer import print_trainable_params, find_all_linear_names
+from src.collators.load_collator import load_collator
+from src.trainers.load_trainer import load_trainer
+from src.model.load_model import load_model
 
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
 os.environ["WORLD_SIZE"] = "1"
 
+
 def print_info(*args):
     """Simple print function"""
     print(*args)
 
+
 @dataclass
 class GeneralConfig:
-    max_eval: int=4
-    trainer: str="raw_vision"
-    
+    max_eval: int = 4
+    trainer: str = "raw_vision"
+
+
 @dataclass
 class DataConfig:
     data_root: str = "./data/"
     dataset: str = "trac_white"
+    dataset_config: dict = field(default_factory=dict)
     train_val_split: float = 0.8
     train_val_dir: str = ""
-    test_dir:str=""
-    image_train_path: str=""
-    image_test_path: str=""
+    test_dir: str = ""
+    image_train_path: str = ""
+    image_test_path: str = ""
     train_sample: int = -1
     val_sample: int = -1
     test_sample: int = -1
@@ -54,7 +59,7 @@ class ModelConfig:
     lora_enable: bool = False
     lora_r: int = 16
     lora_alpha: int = 32
-    tags: List[str] = field(default_factory=list) 
+    tags: List[str] = field(default_factory=list)
 
 
 def parse_cli_args():
@@ -76,6 +81,7 @@ def parse_cli_args():
 
     return parser.parse_args()
 
+
 def load_configs():
     now = datetime.now()
 
@@ -88,16 +94,17 @@ def load_configs():
     data_config = DataConfig(**yaml_config["data"])
 
     model_config = ModelConfig(**yaml_config["model"])
-    general_config=GeneralConfig(**yaml_config["general"])
-    
+    general_config = GeneralConfig(**yaml_config["general"])
+
     train_config = yaml_config["training"]
     train_config["logging_dir"] = os.path.join(train_config["output_dir"], "logs")
-    train_config["learning_rate"]=float(train_config["learning_rate"])
-    train_config["output_dir"]=os.path.join(train_config["output_dir"],datetime_str)
-    print("OUTPUT DIR", train_config["output_dir"])
+    train_config["learning_rate"] = float(train_config["learning_rate"])
+    # train_config["output_dir"] = os.path.join(train_config["output_dir"], datetime_str)
+    # print("OUTPUT DIR", train_config["output_dir"])
     training_config = TrainingArguments(**train_config)
 
-    return training_config, model_config, data_config,general_config
+    return training_config, model_config, data_config, general_config
+
 
 def save_configs(output_dir: str, training_config, model_config, data_config, cli_args):
     config = {
@@ -112,66 +119,14 @@ def save_configs(output_dir: str, training_config, model_config, data_config, cl
         json.dump(config, f, indent=2)
 
 
-def find_all_linear_names(model):
-    """Find all linear layer names for LoRA"""
-    cls = torch.nn.Linear
-    lora_module_names = set()
-    ignore_keywords = [
-        "vision_tower",
-        "mm_projector",
-        "embed_tokens",
-        "lm_head",
-        "seg_projector",
-        "seg_module",
-        "bbox3d_head",
-        "bbox3d_projector",
-    ]
-    for name, module in model.named_modules():
-        if any(mm_keyword in name for mm_keyword in ignore_keywords):
-            continue
-        if isinstance(module, cls):
-            lora_module_names.add(name)
-    return list(lora_module_names)
-
-
-def print_trainable_params(model, verbose=True):
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    if verbose:
-        print(f"{'Layer name':<60} {'Trainable params':>20} {'% Trainable':>15}")
-        print("-" * 100)
-
-        for name, param in model.named_parameters():
-            num_params = param.numel()
-            if param.requires_grad:
-                trainable = "✓"
-                percent = num_params / trainable_params * 100
-                print(f"{name:<60} {num_params:>20,} {percent:>14.2f}%")
-            else:
-                if verbose > 1:
-                    print(f"{name:<60} {'0':>20} {'(frozen)':>15}")
-
-    print("\nSummary:")
-    print(f"Total parameters: {total_params:,}")
-    print(
-        f"Trainable parameters: {trainable_params:,} ({trainable_params/total_params:.1%})"
-    )
-    print(
-        f"Frozen parameters: {total_params - trainable_params:,} ({(total_params - trainable_params)/total_params:.1%})"
-    )
-
-    return trainable_params, total_params
-
-
 def main():
 
-    training_config, model_config, data_config,general_config = load_configs()
+    training_config, model_config, data_config, general_config = load_configs()
     cli_args = parse_cli_args()
     print("TRAIN CONFIG", training_config)
     print("MODEL CONFIG", model_config)
     print("DATA CONFIG", data_config)
-    print("GENERAL CONFIG",general_config)
+    print("GENERAL CONFIG", general_config)
     save_configs(
         training_config.output_dir, training_config, model_config, data_config, cli_args
     )
@@ -179,12 +134,6 @@ def main():
     torch.manual_seed(training_config.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(training_config.seed)
-
-    print_info("=" * 20 + " Tokenizer preparation " + "=" * 20)
-    if model_config.collator == "white":
-        collator = WhiteCollator()
-    else:
-        raise NotImplementedError
     train_set, val_set, test_set = load_data(
         train_val_dir=data_config.train_val_dir,
         test_dir=data_config.test_dir,
@@ -194,25 +143,33 @@ def main():
         train_sample=data_config.train_sample,
         val_sample=data_config.val_sample,
         test_sample=data_config.test_sample,
+        dataset_config=data_config.dataset_config,
     )
-    print("OUTPUT DIR",training_config.output_dir)
+    print("OUTPUT DIR", training_config.output_dir)
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))
 
+    run_id=None
     if training_config.report_to[0] == "wandb":
-        print("tags",model_config.tags)
+        print("tags", model_config.tags)
         tracker = WandbTracker(tags=model_config.tags)
+        run_id = tracker.get_id()
+        print_info(f"Wandb run ID: {run_id}")
+        output_dir=os.path.join(training_config.output_dir, run_id)
+        training_config.output_dir = output_dir
+        print("Updated output directory:", training_config.output_dir)
     else:
         raise NotImplementedError(f"Tracker is not match{training_config.report_to}")
 
     print_info("=" * 20 + " Model preparation " + "=" * 20)
-    if model_config.vision_backbone == "resnet":
-        model = ResNet18_3D()
-    # elif model_config.vision_backbone=="densenet":
-    #     from src.model.Encoder.densenet import DenseNet3D
-    else:
-        raise NotImplementedError(model_config.vision_backbone)
+    model = load_model(
+        config=model_config,
+    )
+    collator = load_collator(
+        collator_name=model_config.collator,
+    )
+    custom_trainer = load_trainer(trainer_name=general_config.trainer)
     print(
         "trainable params",
         sum(p.numel() for p in model.parameters() if p.requires_grad),
@@ -223,22 +180,23 @@ def main():
         model.gradient_checkpointing_enable()
     model.to(training_config.device)
 
-    if general_config.max_eval!=-1:
+    if general_config.max_eval != -1:
         batch_size = training_config.per_device_train_batch_size * max(
             1, training_config.n_gpu
         )
         train_dataset_size = len(train_set)
         gradient_accumulation_steps = training_config.gradient_accumulation_steps or 1
 
-        steps_per_epoch = train_dataset_size // (batch_size * gradient_accumulation_steps)
+        steps_per_epoch = train_dataset_size // (
+            batch_size * gradient_accumulation_steps
+        )
 
-        # print("batch size",batch_size, steps_per_epoch, train_dataset_size, gradient_accumulation_steps,gradient_accumulation_steps)
-        eval_steps = max(5, steps_per_epoch //  general_config.max_eval)
-    
-        print("EVAL STEP",eval_steps)
+        eval_steps = max(5, steps_per_epoch // general_config.max_eval)
+
+        print("EVAL STEP", eval_steps)
         training_config.eval_steps = eval_steps
         training_config.save_steps = eval_steps
-    trainer = RawVisionTrainer(
+    trainer = custom_trainer(
         model=model,
         tracker=tracker,
         args=training_config,
@@ -250,12 +208,11 @@ def main():
     trainer.train()
     print_info("Training complete!")
     print("evaluate")
-    test_results = trainer.evaluate(
-    eval_dataset=test_set, 
-    metric_key_prefix="test"  
-)
+    # test_results = trainer.evaluate(eval_dataset=test_set, metric_key_prefix="test")
+    val_results = trainer.evaluate()
+    
     tracker.on_train_end()
-  
+
     print_info(f"Model saved to {training_config.output_dir}")
 
 

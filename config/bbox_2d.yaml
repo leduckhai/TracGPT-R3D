@@ -6,29 +6,39 @@ data:
   test_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data
   image_train_path: /root/VLMTrac/2d_data/train/image
   image_test_path: /root/VLMTrac/2d_data/test/image
-  train_sample: -1
-  val_sample: -1
-  test_sample: -1
+  # train_sample: -1
+  # val_sample: -1
+  # test_sample: -1
+  dataset_config: 
+    only_2d: True
+
+  train_sample: 4
+  val_sample: 4
+  test_sample: 4
+  # train_sample: 500
+  # val_sample: 100
+  # test_sample: 100
   dataloader_pin_memory: False
   
 
 general:
   max_eval: 1
-  trainer: bbox_trainer
+  trainer: bbox_2d
 
 model:
-  tags: [resnet]
-  vision_backbone: "resnet"
-  collator: "white"
+  tags: [rcnn]
+  vision_backbone: "rcnn"
+  # collator: "white"
+  collator: "bbox_2d"
   lora_enable: false
   lora_r: 16
   lora_alpha: 32
 
 training:
   output_dir: "./output"
-  per_device_train_batch_size: 12
-  per_device_eval_batch_size: 12
-  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  num_train_epochs: 1
   logging_dir: "./logs"  
   eval_strategy: "steps"
   eval_steps: 200
@@ -49,7 +59,8 @@ training:
   seed: 42
   fp16: False
   bf16: False
-  metric_for_best_model: eval_loss
-  greater_is_better: False
+  metric_for_best_model: precision
+  greater_is_better: True
+  # greater_is_better: False
   save_safetensors: False
   dataloader_pin_memory: False

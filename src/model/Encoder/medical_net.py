@@ -3,7 +3,9 @@ import torch.nn as nn
 from transformers import AutoModel, AutoConfig
 import numpy as np
 from typing import Optional, Tuple
-
+import sys 
+sys.path.append("/root/TracGPT-R3D")
+from src.model.Encoder.rcnn_3d.sample_prosal import _sample_proposals
 class MedicalNet3DEncoder(nn.Module):
     """
     MedicalNet 3D vision encoder for encoding medical images to features

@@ -11,9 +11,8 @@ import wandb
 import numpy as np
 from datetime import datetime
 from src.model.LanguageModel.Vision_white import TracVisionModel, TracVisionConfig
-from src.trainer.vision_trainer import TracVisionTrainer
+from src.trainers.load_trainer import load_trainer
 now = datetime.now()
-
 date_time_string = now.strftime("%d-%m-%Y--%H-%M-%S")
 wandb.init(
     project="TracGPT",
@@ -57,7 +56,6 @@ def set_up_lora(model, training_args):
     from peft import LoraConfig, get_peft_model, TaskType
     lora_module_names = find_all_linear_names(model)
     # print(f"LoRA target modules: {lora_module_names}")
-
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,

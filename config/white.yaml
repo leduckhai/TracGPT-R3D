@@ -1,6 +1,7 @@
 data:
   data_root: "./data/"
   dataset: "trac_white"
+  # config:
   train_val_split: 0.8
   train_val_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data
   test_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data
