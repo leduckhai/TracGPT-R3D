@@ -24,6 +24,7 @@ data:
 general:
   max_eval: 1
   trainer: bbox_2d
+  collator: "standard"
 
 
 model:
@@ -61,28 +62,7 @@ model:
       # mm_projector_type: linear
       mm_projector_type: minigpt
   
-    bbox_predictor:
-      bbox_head:
-        in_channels: 1
-        input_dim: 2048
-        hidden_dim: 512
-        num_classes: 1
-        # max_bbox_len: 9
-        max_bbox_len: 1
-        normalize_coords: True
-        coord_bounds: 
-          x_min: 0
-          x_max: 255
-          y_min: 0
-          y_max: 255
-          z_min: 0
-          z_max: 31
-
-        
-        mm_hidden_size: 512
-        bbox3d_head_type: default
-        bbox3d_projector_type: default
-          
+  
 
 
 training:

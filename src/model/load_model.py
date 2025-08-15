@@ -1,4 +1,4 @@
-from src.model.Encoder.rcnn import TrainableFasterRCNN
+from src.model.vision_encoder.rcnn import TrainableFasterRCNN
 def load_model(config):
     if config.vision_backbone == "rcnn":
         model = TrainableFasterRCNN()

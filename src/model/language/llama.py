@@ -60,7 +60,7 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
         past_key_values: Optional[Tuple[torch.FloatTensor]] = None,
         use_cache: Optional[bool] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        
+        labels: Optional[torch.LongTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> CausalLMOutputWithPast:
@@ -90,6 +90,16 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
                     dtype=torch.long,
                     device=multi_modal_input.device
                 )
+            if labels is not None:
+                # labels: [B, seq_t]
+                # prepend -100 for vision tokens
+                vision_pad = torch.full(
+                    (labels.size(0), vision_features.size(1)),
+                    -100,
+                    dtype=labels.dtype,
+                    device=labels.device
+                )
+                labels = torch.cat((vision_pad, labels), dim=1)  # [B, seq_v + seq_t]
 
             # ---- 5. Handle positional embeddings
             # LLaMA uses rotary embeddings, which are applied inside the attention layers
@@ -102,7 +112,8 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
         output = self.language_model(
             inputs_embeds=multi_modal_input,
             attention_mask=attention_mask,
-            position_ids=position_ids
+            position_ids=position_ids,
+            labels=labels 
         )
         return output
 
@@ -167,17 +178,16 @@ if __name__ == "__main__":
     device= "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
     
+    print("eos_token:", tokenizer.eos_token)
+    print("pad_token:", tokenizer.pad_token)
+    # tokenizer.add_special_tokens({"pad_token": "[PAD]"})
     tokenizer.pad_token = tokenizer.eos_token  # Set pad token to eos token for compatibility
     tokenizer.padding_side = "right"  # Ensure padding is on the right side
-    batch_images = torch.randn(1, 1,32, 256, 256).to("cuda")
-    batch_images = batch_images.to(device)
-    prompt = "Describe this image in detail:"
-    text_inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-    # input_ids = text_inputs.input_ids
-    # attention_mask = text_inputs.attention_mask
+   
+
     
     data_config=full_config["data"]
-    dataset= load_data(
+    train_set, val_set, test_set= load_data(
         train_val_dir=data_config["train_val_dir"],
         test_dir=data_config["test_dir"],
         image_train_path=data_config["image_train_path"],
@@ -186,10 +196,10 @@ if __name__ == "__main__":
         train_sample=data_config["train_sample"],
         val_sample=data_config["val_sample"],
         test_sample=data_config["test_sample"],
-        dataset_config=data_config["dataset_config"];
+        dataset_config=data_config["dataset_config"]
     )
-    collator = load_collator(full_config["collator"])
-    train_set, val_set, test_set = dataset
+    print("Collator:", full_config["general"]["collator"])
+    collator = load_collator(full_config["general"]["collator"],tokenizer=tokenizer)
     train_loader = torch.utils.data.DataLoader(
         train_set,
         batch_size=1,
@@ -201,10 +211,24 @@ if __name__ == "__main__":
     for i, batch in enumerate(train_loader):
         if i >= 1:
             break
-        # images = batch["image"].to(device)
-        # texts = batch["text"]
-        # print("Batch images shape:", images.shape)
-        # print("Batch text:", texts)
+        images = batch["images"].to(device)
+        print("images shape", images.shape)
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        full_texts = batch["full_texts"]
+        labels = batch["labels"].to(device)
+        outputs = model(
+            images=images,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels
+        )
+        
+    
+    batch_images = torch.randn(1, 1,32, 256, 256).to("cuda")
+    batch_images = batch_images.to(device)
+    prompt = "Describe this image in detail:"
+    text_inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
     outputs = model.generate_with_images(
         images=batch_images,
         input_ids=text_inputs.input_ids,
@@ -214,5 +238,4 @@ if __name__ == "__main__":
         top_p=0.9
     )
 
-    # 5. Decode
     print(tokenizer.decode(outputs[0], skip_special_tokens=True))
