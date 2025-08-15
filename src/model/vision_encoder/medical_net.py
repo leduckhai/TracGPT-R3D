@@ -5,7 +5,6 @@ import numpy as np
 from typing import Optional, Tuple
 import sys 
 sys.path.append("/root/TracGPT-R3D")
-from src.model.Encoder.rcnn_3d.sample_prosal import _sample_proposals
 class MedicalNet3DEncoder(nn.Module):
     """
     MedicalNet 3D vision encoder for encoding medical images to features
@@ -24,12 +23,10 @@ class MedicalNet3DEncoder(nn.Module):
         self.config = AutoConfig.from_pretrained(model_name)
         self.backbone = AutoModel.from_pretrained(model_name)
         
-        # Freeze backbone if specified
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
         
-        # Get the feature dimension from the backbone
         # MedicalNet-Resnet10 typically outputs 512 features
         backbone_dim = self.backbone.config.hidden_size if hasattr(self.backbone.config, 'hidden_size') else 512
         

@@ -109,27 +109,34 @@ class FullLinear(nn.Module):
         num = 2048
         return num
 
-
-def build_mm_projector(config):
+def load_mm_projector(config):
+    """
+    Load the multimodal projector based on the configuration.
     
-   
-    if config.mm_projector_type == 'linear':
-        return FullLinear( in_dim=config.in_dim,hidden_dim=config.hidden_dim,out_dim=config.out_dim)
-    elif config.mm_projector_type    == 'spp':
-        return SpatialPoolingProjector(image_size=config.image_size,
-                                        patch_size=config.patch_size,
-                                        in_dim=config.in_dim,
-                                        out_dim=config.out_dim,
-                                        layer_type=config.layer_type,
-                                        layer_num=config.layer_num,
-                                        pooling_type=config.pooling_type,
-                                        pooling_size=config.pooling_size)
-
-    elif config.mm_projector_type == 'minigpt':
+    Args:
+        config (dict): Configuration dictionary containing projector type and parameters.
+        
+    Returns:
+        nn.Module: The initialized multimodal projector.
+    """
+    if config["mm_projector_type"] == 'linear':
+        return FullLinear(in_dim=config["in_dim"], hidden_dim=config["hidden_dim"], out_dim=config["out_dim"])
+    elif config["mm_projector_type"] == 'spp':
+        return SpatialPoolingProjector(
+            image_size=config["image_size"],
+            patch_size=config["patch_size"],
+            in_dim=config["in_dim"],
+            out_dim=config["out_dim"],
+            layer_type=config["layer_type"],
+            layer_num=config["layer_num"],
+            pooling_type=config["pooling_type"],
+            pooling_size=config["pooling_size"]
+        )
+    elif config["mm_projector_type"] == 'minigpt':
         return Minigpt(config)
-    elif config.mm_projector_type == 'identity':
+    elif config["mm_projector_type"] == 'identity':
         return IdentityMap()
-    elif config.mm_projector_type == 'transpose':
+    elif config["mm_projector_type"] == 'transpose':
         return TransposeProjector(config)
     else:
         raise ValueError(f'Unknown projector type: {config.mm_projector_type}')
