@@ -12,7 +12,7 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 import yaml
-from utils.type import dict_to_namespace
+# from utils.type import dict_to_namespace
 
 class IdentityMap(nn.Module):
     def __init__(self):
@@ -29,7 +29,7 @@ class Minigpt(nn.Module):
         
         super(Minigpt, self).__init__()
         # c*4 is the input size, and c is the output size for the linear layer
-        in_channels,out_channels,in_embed,out_embed = config.in_channels, config.out_channels, config.in_embed, config.out_embed
+        in_channels,out_channels,in_embed,out_embed = config["in_channels"], config["out_channels"], config["in_embed"], config["out_embed"] 
         # inc, ouc = in_dim, out_dim
         # self.linear = nn.Linear(inc * 4, ouc)
         if in_channels % out_channels != 0:
@@ -57,7 +57,7 @@ class Vanilla(nn.Module):
     def __init__(self, config=None):
         super(Vanilla, self).__init__()
         # c*4 is the input size, and c is the output size for the linear layer
-        inc, ouc = config.mm_hidden_size, config.hidden_size
+        inc, ouc = config["mm_hidden_size"], config["hidden_size"]
         self.linear = nn.Linear(inc * 4, ouc)
 
     def forward(self, x):

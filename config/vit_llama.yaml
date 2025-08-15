@@ -32,7 +32,6 @@ model:
     language_model: 
       name: meta-llama/Llama-3.2-1B
     vision_encoder:
-      vision_tower_config: 
         vision_tower: vit3d
         img_size: [32, 256, 256]
         patch_size: [4, 16, 16]
@@ -44,40 +43,40 @@ model:
         vision_select_layer: -1
         vision_select_feature: cls_patch
 
-      projector:
-        image_size: [32, 256, 256]
-        patch_size: [4, 16, 16]
-        # in_dim: 2560
-        out_channels: 256
-        in_channels: 2048
-        in_embed: 256
-        out_embed: 2048
-        # out_dim: 2048
-        # hidden_dim: 1024
-        # out_dim: 256
-        layer_type: mlp
-        layer_num: 1
-        pooling_type: spatial
-        pooling_size: 2
-        # mm_projector_type: linear
-        mm_projector_type: minigpt
-    
-      bbox_predictor:
-        bbox_head:
-          in_channels: 1
-          input_dim: 2048
-          hidden_dim: 512
-          num_classes: 1
-          # max_bbox_len: 9
-          max_bbox_len: 1
-          normalize_coords: True
-          coord_bounds: 
-            x_min: 0
-            x_max: 255
-            y_min: 0
-            y_max: 255
-            z_min: 0
-            z_max: 31
+    projector:
+      image_size: [32, 256, 256]
+      patch_size: [4, 16, 16]
+      # in_dim: 2560
+      out_channels: 256
+      in_channels: 2048
+      in_embed: 256
+      out_embed: 2048
+      # out_dim: 2048
+      # hidden_dim: 1024
+      # out_dim: 256
+      layer_type: mlp
+      layer_num: 1
+      pooling_type: spatial
+      pooling_size: 2
+      # mm_projector_type: linear
+      mm_projector_type: minigpt
+  
+    bbox_predictor:
+      bbox_head:
+        in_channels: 1
+        input_dim: 2048
+        hidden_dim: 512
+        num_classes: 1
+        # max_bbox_len: 9
+        max_bbox_len: 1
+        normalize_coords: True
+        coord_bounds: 
+          x_min: 0
+          x_max: 255
+          y_min: 0
+          y_max: 255
+          z_min: 0
+          z_max: 31
 
         
         mm_hidden_size: 512

@@ -1,7 +1,7 @@
 from src.model.vision_encoder.vit import ViT3DTower
 
 def load_vision_encoder(config):
-    if config["vision_tower_config"]=="vit3d":
+    if config["vision_tower"]=="vit3d":
         in_channels = config["in_channels"]
         img_size = config["img_size"]
         patch_size = config["patch_size"]
@@ -20,4 +20,4 @@ def load_vision_encoder(config):
         )
         return vision_tower
     else:
-        raise ValueError(f"Unsupported vision tower config: {config['vision_tower_config']}")
+        raise ValueError(f"Unsupported vision tower config: {config['vision_tower']}")
