@@ -1,0 +1,6 @@
+python main_raw_vision.py --config_path config/llama.yaml
+
+
+
+
+python main_raw_vision.py  --test --config_path config/vit_llama.yaml --pretrained_path output/fpewqozw/checkpoint-483 --use_lora True

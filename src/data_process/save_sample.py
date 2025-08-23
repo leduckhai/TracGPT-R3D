@@ -36,9 +36,6 @@ def process():
             unormalize_bbox.append([x_min, y_min, z_min, x_max, y_max, z_max])
         print("len unormalize_bbox",len(unormalize_bbox))
         bboxes_colors=draw_3d_bbox_filled(shape,unormalize_bbox)
-        # merge=draw_3d_bbox_wireframe_v2(shape,unormalize_bbox)
-        # merge=draw_3d_bbox_filled(shape,unormalize_bbox)
-        # labels=draw_3d_bbox_labels(shape,unormalize_bbox)
         
         pred_path=f"test_pred_{i}_{n_concat}.nii.gz"
         if os.path.exists(pred_path):

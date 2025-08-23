@@ -21,3 +21,4 @@ def load_vision_encoder(config):
         return vision_tower
     else:
         raise ValueError(f"Unsupported vision tower config: {config['vision_tower']}")
+    

@@ -7,7 +7,6 @@ from datasets import load_dataset
 from collections import defaultdict
 import json 
 
-ds = load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-v7-fix-rotated-image")
 output_folder="./clean_data"
 
 if os.path.exists(output_folder):
@@ -15,7 +14,6 @@ if os.path.exists(output_folder):
 from tqdm import tqdm
 import logging
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -88,19 +86,22 @@ def process_dataset(dataset, output_folder, split_name):
 
 def main():
     # Clear cache
-    clear_cache()
+    # clear_cache()
     
     # Set up clean cache directory
-    cache_dir = "/tmp/hf_cache_clean"
-    os.makedirs(cache_dir, exist_ok=True)
+    # cache_dir = "/tmp/hf_cache_clean"
+    # os.makedirs(cache_dir, exist_ok=True)
     
     # Load dataset
+    ds_path="tungvu3196/vlm-project-with-images-with-bbox-images-v4"
     try:
+        from datasets import disable_caching
+        disable_caching()
+    
         logger.info("Loading dataset...")
         ds = load_dataset(
-            "tungvu3196/vlm-project-with-images-with-bbox-images-v6", 
-            cache_dir=cache_dir,
-            download_mode="force_redownload"
+            ds_path,
+            # download_mode="force_redownload"
         )
         logger.info("Dataset loaded successfully")
     except Exception as e:

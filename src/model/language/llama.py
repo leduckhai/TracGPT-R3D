@@ -41,10 +41,10 @@ from transformers.models.llama.modeling_llama import LlamaForCausalLM
 class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
     config_class = TracLlamaConfig
 
-    def __init__(self, config):
+    def __init__(self, config,tokenizer=None):
         super().__init__(config)
         cfg = config.custom_config  
-
+        self.tokenizer = tokenizer
         self.vision_encoder = load_vision_encoder(cfg["vision_encoder"])
         self.mm_projector = load_mm_projector(cfg["projector"])
         self.language_model = LlamaForCausalLM.from_pretrained(cfg["language_model"]["name"])
@@ -63,6 +63,7 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
         labels: Optional[torch.LongTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        # tokenizer=None,
     ) -> CausalLMOutputWithPast:
         if inputs_embeds is None:
             if input_ids is None:
@@ -101,13 +102,10 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
                 )
                 labels = torch.cat((vision_pad, labels), dim=1)  # [B, seq_v + seq_t]
 
-            # ---- 5. Handle positional embeddings
-            # LLaMA uses rotary embeddings, which are applied inside the attention layers
-            # To "shift" text positions, we just ensure inputs_embeds contains the correct sequence order
-            # No manual pos_ids needed unless you want absolute embeddings
             position_ids = attention_mask.cumsum(dim=1) - 1
             position_ids.masked_fill_(attention_mask == 0, 0) # Masked tokens keep pos=0
         else:
+            print("Using provided inputs_embeds directly.")
             multi_modal_input = inputs_embeds
         output = self.language_model(
             inputs_embeds=multi_modal_input,
@@ -118,37 +116,59 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
         return output
 
 
-    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, images=None, **kwargs):
+    def prepare_inputs_for_generation(
+        self,
+        input_ids,
+        attention_mask=None,
+        images=None,
+        **kwargs
+    ):
         """
-        This method is called automatically inside `.generate()` to get the right inputs for each decoding step.
+        This method is called automatically inside `.generate()`.
+        It must keep input_ids in sync with inputs_embeds so decoding works.
         """
         batch_size = input_ids.size(0)
 
         # During generation, past_key_values are passed in kwargs
         past_key_values = kwargs.get("past_key_values", None)
 
-        # Only encode vision features at the *first* decoding step
         if past_key_values is None and images is not None:
-            vision_features = self.vision_encoder(images)
-            vision_features = self.mm_projector(vision_features)
+            vision_features = self.vision_encoder(images)            # (B, seq_v, dim_v)
+            vision_features = self.mm_projector(vision_features)     # (B, seq_v, hidden)
 
-            text_embeddings = self.text_embed_fn(input_ids)
+            text_embeddings = self.text_embed_fn(input_ids)          # (B, seq_t, hidden)
+
+            vision_length = vision_features.size(1)
+            vision_input_ids = torch.full(
+                (batch_size, vision_length),
+                self.tokenizer.pad_token_id,   # or a dedicated <VIS> token id
+                dtype=input_ids.dtype,
+                device=input_ids.device,
+            )
+
+            # Concatenate ids + embeddings
+            input_ids = torch.cat((vision_input_ids, input_ids), dim=1)
             inputs_embeds = torch.cat((vision_features, text_embeddings), dim=1)
 
             # Adjust attention mask
             if attention_mask is not None:
-                vision_mask = torch.ones(batch_size, vision_features.size(1), device=attention_mask.device)
+                vision_mask = torch.ones(batch_size, vision_length, device=attention_mask.device)
                 attention_mask = torch.cat((vision_mask, attention_mask), dim=1)
+            else:
+                attention_mask = torch.ones(batch_size, input_ids.size(1), device=input_ids.device)
+
         else:
-            # During later steps, use only text token embeddings
+            # ---- Later steps: only text ----
             inputs_embeds = self.text_embed_fn(input_ids)
 
         return {
+            "input_ids": input_ids,                     # 🔑 must return this so .generate() tracks sequence
             "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
             "past_key_values": past_key_values,
             "use_cache": kwargs.get("use_cache", True),
         }
+
 
     def generate_with_images(self, images, input_ids, attention_mask=None, **gen_kwargs):
         """
@@ -157,7 +177,7 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
         return super().generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            images=images,
+            images=images,   # will flow into prepare_inputs_for_generation
             **gen_kwargs
         )
 if __name__ == "__main__":
@@ -202,13 +222,21 @@ if __name__ == "__main__":
     collator = load_collator(full_config["general"]["collator"],tokenizer=tokenizer)
     train_loader = torch.utils.data.DataLoader(
         train_set,
-        batch_size=1,
+        batch_size=2,
         shuffle=True,
         collate_fn=collator,
         num_workers=0,
         pin_memory=True,
     )
-    for i, batch in enumerate(train_loader):
+    val_loader = torch.utils.data.DataLoader(
+        val_set,
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=0,
+        pin_memory=True,
+    )
+    for i, batch in enumerate(val_loader):
         if i >= 1:
             break
         images = batch["images"].to(device)
@@ -217,25 +245,36 @@ if __name__ == "__main__":
         attention_mask = batch["attention_mask"].to(device)
         full_texts = batch["full_texts"]
         labels = batch["labels"].to(device)
-        outputs = model(
+        # outputs = model(
+        #     images=images,
+        #     input_ids=input_ids,
+        #     attention_mask=attention_mask,
+        #     labels=labels
+        # )
+        with torch.inference_mode():
+            outputs = model.generate_with_images(
             images=images,
             input_ids=input_ids,
+            max_new_tokens=50,
             attention_mask=attention_mask,
-            labels=labels
+            temperature=0.7,
+            top_p=0.9
         )
-        
-    
-    batch_images = torch.randn(1, 1,32, 256, 256).to("cuda")
-    batch_images = batch_images.to(device)
-    prompt = "Describe this image in detail:"
-    text_inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-    outputs = model.generate_with_images(
-        images=batch_images,
-        input_ids=text_inputs.input_ids,
-        attention_mask=text_inputs.attention_mask,
-        max_length=50,
-        temperature=0.7,
-        top_p=0.9
-    )
+            # print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+            text=tokenizer.batch_decode(outputs, skip_special_tokens=True)
+            print("Generated text:", text)
+            print("Full texts:", full_texts)
+    # batch_images = torch.randn(1, 1,32, 256, 256).to("cuda")
+    # batch_images = batch_images.to(device)
+    # prompt = "Describe this image in detail:"
+    # text_inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+    # outputs = model.generate_with_images(
+    #     images=batch_images,
+    #     input_ids=text_inputs.input_ids,
+    #     attention_mask=text_inputs.attention_mask,
+    #     max_length=50,
+    #     temperature=0.7,
+    #     top_p=0.9
+    # )
 
-    print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+    # print(tokenizer.decode(outputs[0], skip_special_tokens=True))
