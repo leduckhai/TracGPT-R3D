@@ -94,7 +94,7 @@ if __name__ == "__main__":
     from src.dataset.dataloader import load_data
     
     # img
-    # Example usage
+    # Example usage  
     # model, tokenizer, dataloader, output_dir should be defined
     # infer_test_data(model, tokenizer, dataloader, output_dir)
     pass  # Replace with actual model, tokenizer, dataloader, and output_dir initialization

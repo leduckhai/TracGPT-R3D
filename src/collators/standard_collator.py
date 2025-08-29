@@ -15,21 +15,12 @@ class StandardCollator:
         self.max_length = max_length
         self.image_token = "<image>"
         self.IGNORE_INDEX = -100
-        
-        # Add image token to tokenizer if not present
-        if self.image_token not in self.tokenizer.get_vocab():
-            self.tokenizer.add_tokens([self.image_token], special_tokens=True)
-            print(f"Added '{self.image_token}' token to tokenizer")
-
+        self.answer_word_token="<answer>"
+        self.asnwer_word_tokenized=self.tokenizer.encode(self.answer_word_token,add_special_tokens=False)
+        print("PAD TOKEN",self.tokenizer.pad_token)
+        self.pad_token_id=self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)
     def __call__(self, batch):
-        """
-        Preprocess a batch of samples for multimodal training.
-        
-        Each sample should have:
-            - 'image': image tensor [C,H,W]
-            - 'Q4': question string or list
-            - 'answer': answer string
-        """
+   
         images = []
         batch_input_ids = []
         batch_attention_masks = []
@@ -39,60 +30,68 @@ class StandardCollator:
         p_ids = []
 
         for sample in batch:
-            image = sample['image']
-            image = image.unsqueeze(0)
+            image = sample['image'].unsqueeze(0)
             images.append(image)
             p_ids.append(sample.get('P_ID', ''))
+
             question = sample['Q4'][0] if isinstance(sample['Q4'], list) else sample['Q4']
             answer = sample['answer']
-            status = sample.get('A4', '')
+            answer_text= "<answer> "+ answer
+            status = sample['A4']
             class_labels.append(status)
 
-            text = f"{self.image_token}\nQuestion: {question}\nAnswer: {answer}"
-            sample["text"] = text
-            full_texts.append(text)
+            # Construct the full text with proper formatting
+            question_text = f"<context> {self.image_token} <context> \n <Question>: {question}\n"
+            full_text = question_text +   answer_text
 
+            
+            sample["text"] = full_text
+            full_texts.append(full_text)
+
+            # Tokenize the full text (this should match the labels structure)
             tokenized = self.tokenizer(
-                text,
+                full_text,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self.max_length,
                 padding=False,
                 add_special_tokens=True
             )
-            
-            input_ids = tokenized.input_ids[0]       # [seq_len]
+            input_ids = tokenized.input_ids[0]  # [seq_len]
             attention_mask = tokenized.attention_mask[0]  # [seq_len]
 
-            labels = self._create_labels(input_ids, question, answer)
+            question_tokenized = self.tokenizer(
+                question_text,
+                return_tensors="pt",
+                add_special_tokens=True,
+                truncation=False,
+                padding=False
+            )
+            question_length = len(question_tokenized.input_ids[0])
+            
+            labels = torch.full_like(input_ids, fill_value=self.IGNORE_INDEX)
+            
+            if len(labels) > question_length:
+                labels[question_length:] = input_ids[question_length:].clone()
 
             batch_input_ids.append(input_ids)
             batch_attention_masks.append(attention_mask)
             batch_labels.append(labels)
 
+        # Pad sequences to the same length
         batch_input_ids = torch.nn.utils.rnn.pad_sequence(
-            batch_input_ids,
-            batch_first=True,
-            padding_value=self.tokenizer.pad_token_id
+            batch_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
         batch_attention_masks = torch.nn.utils.rnn.pad_sequence(
-            batch_attention_masks,
-            batch_first=True,
-            padding_value=0
+            batch_attention_masks, batch_first=True, padding_value=0
         )
         batch_labels = torch.nn.utils.rnn.pad_sequence(
-            batch_labels,
-            batch_first=True,
-            padding_value=self.IGNORE_INDEX
+            batch_labels, batch_first=True, padding_value=self.IGNORE_INDEX
         )
 
-        # Stack images properly
-        try:
-            images_tensor = torch.stack(images)
-        except RuntimeError as e:
-            print(f"Error stacking images: {e}")
-            # Handle inconsistent image sizes by resizing or skipping
-            images_tensor = torch.zeros(len(images), 3, 224, 224)  # Fallback
+        # Stack images - handle different sizes gracefully
+        images_tensor = torch.stack(images)
+        
 
         processed = {
             "input_ids": batch_input_ids,
@@ -103,6 +102,7 @@ class StandardCollator:
             "class_labels": class_labels,
             "p_ids": p_ids,
         }
+
         return processed
 
     def _create_labels(self, input_ids: torch.Tensor, question: str, answer: str) -> torch.Tensor:
@@ -124,6 +124,7 @@ class StandardCollator:
             labels[input_ids == self.tokenizer.pad_token_id] = self.IGNORE_INDEX
         
         return labels
+
 
     def _find_answer_start(self, input_ids: torch.Tensor, answer: str) -> int:
         """
@@ -164,6 +165,7 @@ class StandardCollator:
             print(f"Error finding answer start: {e}")
             return -1
 
+        
 def find_sublist_index(full_list, sublist):
     """
     Finds the starting index of a sublist within a larger list.

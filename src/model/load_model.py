@@ -1,47 +1,54 @@
 import sys 
 sys.path.append("/root/TracGPT-R3D")
 from src.model.vision_encoder.rcnn import TrainableFasterRCNN
-from src.model.language.llama import TracLlamaForCausalLM, TracLlamaConfig, prepare_multi_modal_input
+# from src.model.language.llama import TracLlamaForCausalLM, TracLlamaConfig, prepare_multi_modal_input
 import torch
 from transformers import AutoTokenizer
-
+from src.model.llava_origin_v2 import LlavaForCausalLM,TracConfig
+from transformers import AutoModelForCausalLM
 def load_model(config,pretrained_path=None,lora=False):
-    if config["name"]=="vit_llama":
-        custom_config = config["config"]
-        config= TracLlamaConfig(config=custom_config)
-        base_model_name = custom_config["language_model"]["name"]
-        print("Loading base model:", base_model_name)
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-        if pretrained_path:
-            print("Loading pretrained model from:", pretrained_path)
-            if lora:
-                print("Loading LoRA weights")
-                from peft import PeftModel
-                base_model = TracLlamaForCausalLM(config=config,tokenizer=tokenizer)
-                model = PeftModel.from_pretrained(base_model, pretrained_path)
 
-                # Merge adapter weights (optional, converts to full model)
-                # model = model.merge_and_unload()
-                # model = TracLlamaForCausalLM.from_pretrained(pretrained_path, config=config)
-           
+  
+        base_model_name=config["config"]["language_model"]["name"]
+        print("base_model_name",base_model_name)
+        
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        if config["name"] == "vit_llama":
+            custom_config = config["config"]
+            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+            base_model_name = custom_config["language_model"]["name"]
+            print("Loading base model:", base_model_name)
+            new_tokens = ["<image>", "<PAD>"]
+            tokenizer.add_tokens(new_tokens, special_tokens=True)
+            tokenizer.pad_token = "<PAD>"
+            print(f"Set pad_token : {tokenizer.pad_token}")
+            if not pretrained_path:
+                print("Loading TracLlamaForCausalLM")
+                base_model_name = custom_config["language_model"]["name"]
+               
+                config=TracConfig(custom_config)
+                model = LlavaForCausalLM(config,tokenizer=tokenizer)
+                return tokenizer, model
             else:
-                print("Loading full model weights")
-                model = TracLlamaForCausalLM.from_pretrained(pretrained_path, config=config)
-        else:
-            print("Initializing new model with config:", config)
-            model = TracLlamaForCausalLM(config=config,tokenizer=tokenizer)
-        # model = TracLlamaForCausalLM(config)
-        device= "cuda" if torch.cuda.is_available() else "cpu"
-        model = model.to(device)
+                print("Loading pretrained model from:", pretrained_path)
+                custom_config = config["config"]
+                config=TracConfig(custom_config)
+                if lora:
+                    print("Loading LoRA weights")
+                    from peft import PeftModel
+                    base_model = LlavaForCausalLM(config=config,tokenizer=tokenizer)
+                    model = PeftModel.from_pretrained(base_model, pretrained_path)
+
+                    model = model.merge_and_unload()
+                    return tokenizer, model
+            
+                else:
+                    print("Loading full model weights")
+                    model = LlavaForCausalLM.from_pretrained(pretrained_path, config=config)
         
-        print("eos_token:", tokenizer.eos_token)
-        print("pad_token:", tokenizer.pad_token)
-        tokenizer.pad_token = tokenizer.eos_token 
-        tokenizer.padding_side = "right"  
-        return tokenizer, model
+                return tokenizer, model
         
-    else:
-        raise ValueError(f"Model {config.vision_backbone} not found")
+    
 if __name__ == "__main__":
     import os
     import yaml
@@ -51,7 +58,7 @@ if __name__ == "__main__":
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     model_config= config["model"]
-    pretrain_path="output/vmxnsx4m/checkpoint-523"
+    pretrain_path="output/6xtl6uw0/checkpoint-483"
     assert os.path.exists(pretrain_path), f"Pretrained path {pretrain_path} does not exist."
 
     tokenizer, model = load_model(model_config, pretrained_path=pretrain_path, lora=True)
@@ -97,26 +104,30 @@ if __name__ == "__main__":
         attention_mask = batch["attention_mask"].to(device)
         full_texts = batch["full_texts"]
         labels = batch["labels"].to(device)
-        # outputs = model(
-        #     images=images,
-        #     input_ids=input_ids,
-        #     attention_mask=attention_mask,
-        #     labels=labels
-        # )
+        tokenizer.padding_side = "left"
+        tokenizer.truncation_side = "left"   
         with torch.inference_mode():
-            outputs = model.generate_with_images(
-            images=images,
-            input_ids=input_ids,
-            max_new_tokens=50,
-            attention_mask=attention_mask,
-            temperature=0.7,
-            top_p=0.9
-        )
-            # print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+            prompt_texts = batch["full_texts"]   
+            device="cuda"
+            enc = tokenizer(
+                prompt_texts,
+                padding=True,
+                truncation=True,
+                max_length=collator.max_length,
+                return_tensors="pt"
+            ).to(device)
+
+            outputs = model.generate(
+                images=images,
+                input_ids=enc.input_ids,
+                attention_mask=enc.attention_mask,
+                max_new_tokens=50,
+            )
             text=tokenizer.batch_decode(outputs, skip_special_tokens=True)
-            # print("Generated text:", text)
-            for i, t in enumerate(text):
-                print(f" {i} Generated text:", t)
-            print("Full texts:", full_texts)
+
+            print("Generated text:", text)
+            # for i, t in enumerate(text):
+            #     print(f" {i} Generated text:", t)
+            # print("Full texts:", full_texts)
     
     

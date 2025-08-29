@@ -27,7 +27,7 @@ os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
 os.environ["WORLD_SIZE"] = "1"
 
-
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def print_info(*args):
     """Simple print function"""
     print(*args)
@@ -111,6 +111,7 @@ def load_configs():
 def set_up_lora(model, lora_r, lora_alpha, lora_dropout, lora_target_modules, lora_bias):
     print_info("Setting up LoRA...")
     from peft import LoraConfig, get_peft_model, TaskType
+    print("lora r", lora_r, "lora alpha", lora_alpha, "lora dropout", lora_dropout, "lora target modules", lora_target_modules, "lora bias", lora_bias)
     # lora_module_names = find_all_linear_names(model)
     # print(f"LoRA target modules: {lora_module_names}")
     lora_config = LoraConfig(
@@ -212,7 +213,8 @@ def main():
             )
         if training_config.gradient_checkpointing:
             model.gradient_checkpointing_enable()
-        model.to(training_config.device)
+        # model.to(training_config.device)
+        model.to("cuda")
         
         if general_config.max_eval != -1:
             batch_size = training_config.per_device_train_batch_size * max(

@@ -15,8 +15,8 @@ from typing import Optional
 
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-class TracLlamaConfig(PretrainedConfig):
-    model_type = "trac-llama"
+class TracConfig(PretrainedConfig):
+    model_type = "trac"
 
     def __init__(self, config=None, **kwargs):
         self.custom_config = config if config is not None else {}
@@ -39,7 +39,7 @@ def prepare_multi_modal_input(image_embeddings, text_embeddings):
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 
 class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
-    config_class = TracLlamaConfig
+    config_class = TracConfig
 
     def __init__(self, config,tokenizer=None):
         super().__init__(config)
@@ -47,7 +47,8 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
         self.tokenizer = tokenizer
         self.vision_encoder = load_vision_encoder(cfg["vision_encoder"])
         self.mm_projector = load_mm_projector(cfg["projector"])
-        self.language_model = LlamaForCausalLM.from_pretrained(cfg["language_model"]["name"])
+        base_model_name=cfg["language_model"]["name"]
+        self.language_model=AutoModelForCausalLM.from_pretrained(base_model_name)
         self.text_embed_fn = self.language_model.model.embed_tokens
         self.hidden_size = self.language_model.config.hidden_size
     def forward(
@@ -92,8 +93,6 @@ class TracLlamaForCausalLM(PreTrainedModel,GenerationMixin):
                     device=multi_modal_input.device
                 )
             if labels is not None:
-                # labels: [B, seq_t]
-                # prepend -100 for vision tokens
                 vision_pad = torch.full(
                     (labels.size(0), vision_features.size(1)),
                     -100,
