@@ -26,7 +26,7 @@ data:
   # val_sample: 10
   # test_sample: 2
 
-  train_sample: 500
+  train_sample: -1
   # train_sample: 10
   val_sample: 5
   test_sample: 5
@@ -34,7 +34,7 @@ data:
   
 
 general:
-  max_eval: 2
+  max_eval: 4
   trainer: standard
   collator: "standard"
 
@@ -45,7 +45,9 @@ general:
   lora_r: 32
   lora_alpha: 64
   lora_dropout: 0.05
-  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj","gate_proj", "up_proj", "down_proj",        
+        # "lm_head",                                  
+        "embed_tokens",]
   lora_bias: "none"
 
 #   lora_r: 32
@@ -60,11 +62,12 @@ model:
     language_model: 
       name: meta-llama/Llama-3.2-3B
     vision_encoder:
+        pretrained_path: pretrained_ViT.bin
         vision_tower: vit3d
         img_size: [32, 256, 256]
         patch_size: [4, 16, 16]
         in_channels: 1
-        hidden_size: 256
+        hidden_size: 768
         num_heads: 8
         vision_select_layer: -1
         vision_select_feature: cls_patch
@@ -74,14 +77,18 @@ model:
       patch_size: [4, 16, 16]
       out_channels: 256
       in_channels: 2048
-      in_embed: 256
-      out_embed: 3072
+
+      in_embed: 768
+      hidden_size: 1024
+      out_embed: 2048
+
       layer_type: mlp
       layer_num: 1
       pooling_type: spatial
       pooling_size: 2
       # mm_projector_type: linear
-      mm_projector_type: minigpt
+      # mm_projector_type: minigpt
+      mm_projector_type: linear
   
   
 
@@ -90,7 +97,7 @@ training:
   output_dir: "./output"
   per_device_train_batch_size: 4
   per_device_eval_batch_size: 4
-  num_train_epochs: 1
+  num_train_epochs: 2
   logging_dir: "./logs"  
   eval_strategy: "steps"
   # eval_steps: 50
@@ -98,8 +105,8 @@ training:
   # save_steps: 50
   
   eval_steps: 2
-  logging_steps: 2
-  save_steps: 2
+  logging_steps: 10
+  save_steps: 10
 
   save_strategy: "steps"
   learning_rate: 1e-4

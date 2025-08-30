@@ -9,16 +9,19 @@ sys.path.append("/root/TracGPT-R3D")
 
 
 class StandardCollator:
-    def __init__(self, tokenizer, max_length: int = 512):
+    def __init__(self, tokenizer, max_length: int = 512,extra_config:dict=None):
         print("StandardCollator initialized")
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.image_token = "<image>"
         self.IGNORE_INDEX = -100
-        self.answer_word_token="<answer>"
+        self.answer_word_token="answer: "
         self.asnwer_word_tokenized=self.tokenizer.encode(self.answer_word_token,add_special_tokens=False)
-        print("PAD TOKEN",self.tokenizer.pad_token)
-        self.pad_token_id=self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)
+        self.pad_token_id=self.tokenizer.pad_token_id 
+        if self.pad_token_id is None:
+            self.pad_token_id=self.tokenizer.eos_token_id
+        print("PAD TOKEN", self.pad_token_id)
+        
     def __call__(self, batch):
    
         images = []
@@ -36,12 +39,13 @@ class StandardCollator:
 
             question = sample['Q4'][0] if isinstance(sample['Q4'], list) else sample['Q4']
             answer = sample['answer']
-            answer_text= "<answer> "+ answer
+            answer_text= "  "+ answer
             status = sample['A4']
             class_labels.append(status)
 
             # Construct the full text with proper formatting
-            question_text = f"<context> {self.image_token} <context> \n <Question>: {question}\n"
+            question_text = f"   Question: {question}" + " start_context " +str(self.image_token) + " end_context\n" 
+            question_text= f"   Question: {question}" 
             full_text = question_text +   answer_text
 
             

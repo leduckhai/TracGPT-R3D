@@ -62,11 +62,12 @@ model:
     language_model: 
       name: meta-llama/Llama-3.2-1B
     vision_encoder:
+        pretrained_path: pretrained_ViT.bin
         vision_tower: vit3d
         img_size: [32, 256, 256]
         patch_size: [4, 16, 16]
         in_channels: 1
-        hidden_size: 256
+        hidden_size: 768
         num_heads: 8
         vision_select_layer: -1
         vision_select_feature: cls_patch
@@ -76,14 +77,18 @@ model:
       patch_size: [4, 16, 16]
       out_channels: 256
       in_channels: 2048
-      in_embed: 256
+
+      in_embed: 768
+      hidden_size: 1024
       out_embed: 2048
+
       layer_type: mlp
       layer_num: 1
       pooling_type: spatial
       pooling_size: 2
       # mm_projector_type: linear
-      mm_projector_type: minigpt
+      # mm_projector_type: minigpt
+      mm_projector_type: linear
   
   
 

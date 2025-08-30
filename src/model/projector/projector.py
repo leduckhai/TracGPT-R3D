@@ -120,7 +120,7 @@ def load_mm_projector(config):
         nn.Module: The initialized multimodal projector.
     """
     if config["mm_projector_type"] == 'linear':
-        return FullLinear(in_dim=config["in_dim"], hidden_dim=config["hidden_dim"], out_dim=config["out_dim"])
+        return FullLinear(in_dim=config["in_embed"], hidden_dim=config["hidden_size"], out_dim=config["out_embed"])
     elif config["mm_projector_type"] == 'spp':
         return SpatialPoolingProjector(
             image_size=config["image_size"],

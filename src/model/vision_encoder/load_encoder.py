@@ -2,7 +2,7 @@ import sys
 sys.path.append("/root/TracGPT-R3D")
 from src.model.vision_encoder.vit import ViT3DTower
 
-def load_vision_encoder(config,pretrained_path=None):
+def load_vision_encoder(config):
     if config["vision_tower"]=="vit3d":
         in_channels = config["in_channels"]
         img_size = config["img_size"]
@@ -11,6 +11,7 @@ def load_vision_encoder(config,pretrained_path=None):
         num_heads = config["num_heads"]
         vision_select_layer = config["vision_select_layer"]
         vision_select_feature = config["vision_select_feature"]
+        pretrained_path=config.get("pretrained_path", None)
         vision_tower = ViT3DTower(
             in_channels=in_channels,
             img_size=img_size,
@@ -27,6 +28,7 @@ def load_vision_encoder(config,pretrained_path=None):
 
 if __name__=="__main__":
     import torch
+    weight_path="pretrained_ViT.bin"
     config = {
         "vision_tower": "vit3d",
         "in_channels": 1,
@@ -35,10 +37,10 @@ if __name__=="__main__":
         "hidden_size": 768,
         "num_heads": 8,
         "vision_select_layer": -1,
-        "vision_select_feature": "cls_patch"
+        "vision_select_feature": "cls_patch",
+        "pretrained_path": weight_path
     }
-    weight_path="pretrained_ViT.bin"
-    vision_tower = load_vision_encoder(config,pretrained_path=weight_path)
+    vision_tower = load_vision_encoder(config)
     # print(vision_tower)
     input=torch.randn(2,1,32,256,256)
     output=vision_tower(input)

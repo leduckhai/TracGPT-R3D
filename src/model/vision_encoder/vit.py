@@ -157,34 +157,33 @@ class ViT3DTower(nn.Module):
 
         self.vision_tower = ViT(**vit_kwargs)
         if pretrained_path is not None:
-            state_dict = torch.load(pretrained_path, map_location="cpu")
+            try:
+                state_dict = torch.load(pretrained_path, map_location="cpu")
 
-            # 2. Attempt to load with strict=False
-            missing_keys, unexpected_keys = self.vision_tower.load_state_dict(state_dict, strict=False)
+                missing_keys, unexpected_keys = self.vision_tower.load_state_dict(state_dict, strict=False)
 
-            # 3. Print the results
-            print(f"Number of layers in pre-trained weights: {len(state_dict.keys())}")
-            print(f"Number of successfully loaded layers: {len(state_dict.keys()) - len(missing_keys)}")
-            print(f"Number of missing keys (layers not found in your model): {len(missing_keys)}")
-            print(f"Number of unexpected keys (extra layers in state dict): {len(unexpected_keys)}")
+                print(f"Number of layers in pre-trained weights: {len(state_dict.keys())}")
+                print(f"Number of successfully loaded layers: {len(state_dict.keys()) - len(missing_keys)}")
+                print(f"Number of missing keys (layers not found in your model): {len(missing_keys)}")
+                print(f"Number of unexpected keys (extra layers in state dict): {len(unexpected_keys)}")
 
-            print("\n--- Missing Keys (Layers in pre-trained model but not in yours) ---")
-            for key in missing_keys:
-                print(f"  {key}")
+                print("\n--- Missing Keys (Layers in pre-trained model but not in yours) ---")
+                for key in missing_keys:
+                    print(f"  {key}")
 
-            print("\n--- Unexpected Keys (Layers in your model but not in pre-trained) ---")
-            for key in unexpected_keys:
-                print(f"  {key}")
+                print("\n--- Unexpected Keys (Layers in your model but not in pre-trained) ---")
+                for key in unexpected_keys:
+                    print(f"  {key}")
 
-            # Calculate matching percentage
-            total_pretrained_keys = len(state_dict.keys())
-            matched_keys = total_pretrained_keys - len(missing_keys)
-            matching_percentage = (matched_keys / total_pretrained_keys) * 100
+                total_pretrained_keys = len(state_dict.keys())
+                matched_keys = total_pretrained_keys - len(missing_keys)
+                matching_percentage = (matched_keys / total_pretrained_keys) * 100
 
-            print(f"\nSummary: {matched_keys}/{total_pretrained_keys} layers matched ({matching_percentage:.2f}%)")
-                        # self.vision_tower.load_state_dict(torch.load(pretrained_path))
-        # for param in self.vision_tower.parameters():
-        #     param.requires_grad = False
+                print(f"\nSummary: {matched_keys}/{total_pretrained_keys} layers matched ({matching_percentage:.2f}%)")
+
+            except Exception as e:
+                print(f"Error loading pre-trained weights: {e} \n Falling back to randomly initialized model.")
+                self.vision_tower = ViT(**vit_kwargs)
     def forward(self, images):
         last_feature, hidden_states = self.vision_tower(images)
         if self.select_layer == -1:
