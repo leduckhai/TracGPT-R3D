@@ -39,13 +39,13 @@ class StandardCollator:
 
             question = sample['Q4'][0] if isinstance(sample['Q4'], list) else sample['Q4']
             answer = sample['answer']
-            answer_text= "  "+ answer
+            if len(answer)>0:
+                answer=answer+" "+self.tokenizer.eos_token
+            answer_text= " answer: "+ answer
             status = sample['A4']
             class_labels.append(status)
 
-            # Construct the full text with proper formatting
-            question_text = f"   Question: {question}" + " start_context " +str(self.image_token) + " end_context\n" 
-            question_text= f"   Question: {question}" 
+            question_text = f"   Question: {question}" + " left context " +str(self.image_token) + " right context\n" 
             full_text = question_text +   answer_text
 
             
@@ -82,7 +82,6 @@ class StandardCollator:
             batch_attention_masks.append(attention_mask)
             batch_labels.append(labels)
 
-        # Pad sequences to the same length
         batch_input_ids = torch.nn.utils.rnn.pad_sequence(
             batch_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
@@ -93,7 +92,6 @@ class StandardCollator:
             batch_labels, batch_first=True, padding_value=self.IGNORE_INDEX
         )
 
-        # Stack images - handle different sizes gracefully
         images_tensor = torch.stack(images)
         
 
@@ -116,14 +114,11 @@ class StandardCollator:
         labels = input_ids.clone()
         labels[:] = self.IGNORE_INDEX  # Start by ignoring everything
         
-        # Find where the answer starts
         answer_start_idx = self._find_answer_start(input_ids, answer)
         
         if answer_start_idx != -1:
-            # Only keep labels for the answer portion
             labels[answer_start_idx:] = input_ids[answer_start_idx:]
         
-        # Always mask padding tokens
         if self.tokenizer.pad_token_id is not None:
             labels[input_ids == self.tokenizer.pad_token_id] = self.IGNORE_INDEX
         
@@ -138,7 +133,6 @@ class StandardCollator:
             return -1
         
         try:
-            # Tokenize the answer
             answer_token_ids = self.tokenizer.encode(
                 answer, 
                 add_special_tokens=False,

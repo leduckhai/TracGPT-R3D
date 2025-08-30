@@ -41,9 +41,9 @@ def load_data(
     train_paths, val_paths = train_test_split(
         train_data_paths, test_size=0.1, random_state=42
     )
-    print("train paths", len(train_paths),train_paths)
-    print("val paths", len(val_paths),val_paths)
-    print("test paths", len(test_data_paths),test_data_paths) 
+    # print("train paths", len(train_paths),train_paths)
+    # print("val paths", len(val_paths),val_paths)
+    # print("test paths", len(test_data_paths),test_data_paths) 
     train_set = dataset(
         data_paths=train_paths,
         image_path=image_train_path,

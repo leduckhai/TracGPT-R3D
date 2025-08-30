@@ -4,7 +4,7 @@ from src.model.vision_encoder.rcnn import TrainableFasterRCNN
 # from src.model.language.llama import TracLlamaForCausalLM, TracLlamaConfig, prepare_multi_modal_input
 import torch
 from transformers import AutoTokenizer
-from src.model.llava_origin_v2 import LlavaForCausalLM,TracConfig
+from src.model.llava_origin_v2 import TracLlavaForCausalLM,TracConfig
 from transformers import AutoModelForCausalLM
 def load_model(config,pretrained_path=None,lora=False):
 
@@ -27,7 +27,8 @@ def load_model(config,pretrained_path=None,lora=False):
                 base_model_name = custom_config["language_model"]["name"]
                
                 config=TracConfig(custom_config)
-                model = LlavaForCausalLM(config,tokenizer=tokenizer)
+                model = TracLlavaForCausalLM(config,tokenizer=tokenizer)
+                model.adjust_embeddings_from_num_new_tokens(len(new_tokens))
                 return tokenizer, model
             else:
                 print("Loading pretrained model from:", pretrained_path)
@@ -36,7 +37,7 @@ def load_model(config,pretrained_path=None,lora=False):
                 if lora:
                     print("Loading LoRA weights")
                     from peft import PeftModel
-                    base_model = LlavaForCausalLM(config=config,tokenizer=tokenizer)
+                    base_model = TracLlavaForCausalLM(config=config,tokenizer=tokenizer)
                     model = PeftModel.from_pretrained(base_model, pretrained_path)
 
                     model = model.merge_and_unload()
@@ -44,8 +45,8 @@ def load_model(config,pretrained_path=None,lora=False):
             
                 else:
                     print("Loading full model weights")
-                    model = LlavaForCausalLM.from_pretrained(pretrained_path, config=config)
-        
+                    model = TracLlavaForCausalLM.from_pretrained(pretrained_path, config=config)
+                    model.adjust_embeddings_from_num_new_tokens(len(new_tokens))
                 return tokenizer, model
         
     

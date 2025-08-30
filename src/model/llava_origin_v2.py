@@ -71,10 +71,8 @@ class LlavaImageProcessor:
         else:
             image_features = self.vision_encoder(image)
         
-        # print("image features shape", image_features.shape)
     
         image_features = self.mm_projector(image_features)
-        # print("image features shape", image_features.shape)
         
         return image_features
     
@@ -85,11 +83,13 @@ class LlavaImageProcessor:
                      position_ids=None, past_key_values=None):
         
         B, T = input_ids.shape
+        # print("input id", input_ids)
         if images is None:
             print("images is None, use text only")
             text_embeds = self.embed_tokens(input_ids)
-            position_ids = torch.arange(0, T, dtype=torch.long, device=input_ids.device)
-            return None, text_embeds, labels, attention_mask, position_ids, past_key_values
+            position_ids = torch.arange(0, T, dtype=torch.long, device=input_ids.device).repeat(B, 1)
+            # print("text embed", text_embeds, position_ids, attention_mask,position_ids)
+            return  text_embeds, labels, attention_mask, position_ids
         image_features = self.encode_single_image(images)
         
         if image_features.dim() == 2:  # [B, D]
@@ -108,9 +108,7 @@ class LlavaImageProcessor:
         if labels is None:
             labels = torch.full_like(input_ids, self.IGNORE_INDEX)
 
-        # Embed text tokens -> [B, T, D]
         text_embeds = self.embed_tokens(input_ids)
-        
         image_token_id_tensor = torch.tensor(self.IMAGE_TOKEN_ID, 
                                            device=input_ids.device, 
                                            dtype=input_ids.dtype)
@@ -118,7 +116,7 @@ class LlavaImageProcessor:
 
         num_image_tokens = is_image_token.sum(dim=1)  # [B]
         expanded_lengths = (T - num_image_tokens) + num_image_tokens * Vi
-        L = expanded_lengths.max().item()  # max expanded length
+        L = expanded_lengths.max().item()  
 
         input_embeds = torch.zeros((B, L, D), device=input_ids.device, dtype=text_embeds.dtype)
         new_labels = torch.full((B, L), self.IGNORE_INDEX, device=input_ids.device, dtype=labels.dtype)
@@ -139,7 +137,7 @@ class LlavaImageProcessor:
                     seq_masks.append(torch.ones(Vi, dtype=torch.bool, device=input_ids.device))
                     pos_counter += Vi
                 else:
-                    if attention_mask[b, t]:  # Only include non-padded tokens
+                    if attention_mask[b, t]:  
                         seq_embeds.append(text_embeds[b, t].unsqueeze(0))
                         seq_labels.append(labels[b, t].unsqueeze(0))
                         seq_masks.append(torch.ones(1, dtype=torch.bool, device=input_ids.device))
@@ -155,8 +153,7 @@ class LlavaImageProcessor:
                 new_labels[b, :current_length] = seq_labels
                 new_attention_mask[b, :current_length] = seq_masks
                 new_position_ids[b, :current_length] = torch.arange(current_length, device=input_ids.device)
-
-        # print("input_embeds shape", input_embeds, new_labels, new_attention_mask, new_position_ids)
+        # print("input_embeds", input_embeds,"new_labels", new_labels,"new_attention_mask", new_attention_mask,"new_position_ids", new_position_ids)
         return input_embeds, new_labels, new_attention_mask, new_position_ids
 
 
@@ -169,10 +166,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
         
         base_model_name=cfg["language_model"]["name"]
         print("Loading trac base model:", base_model_name)
-        # self.model = AutoModelForCausalLM.from_pretrained(
-        #     base_model_name,
-        #     torch_dtype=torch.float16,  
-        # )
+        
         self.model = LlamaForCausalLM.from_pretrained(
                 base_model_name,
                 torch_dtype=torch.float16,
@@ -228,29 +222,49 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 past_key_values=past_key_values
             )
         
-       
-        transformer_outputs = self.model.model(
-        inputs_embeds=inputs_embeds,
-        attention_mask=attention_mask,
-        position_ids=position_ids,
-        past_key_values=past_key_values,
-        use_cache=use_cache,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states,
-        return_dict=return_dict,
-    )
-        hidden_states = transformer_outputs[0]  # [B, L, H]
-
-        logits = self.model.lm_head(hidden_states)  
-        loss = None
-        if labels is not None:
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss_fct = torch.nn.CrossEntropyLoss(ignore_index=self.image_processor.IGNORE_INDEX)
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
-                            shift_labels.view(-1))
-
+    #     print("inputs_embeds shape", inputs_embeds.shape,"labels shape", labels.shape,"attention_mask shape", attention_mask.shape,"position_ids shape", position_ids.shape)
     
+        transformer_outputs = self.model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            labels=labels,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        return transformer_outputs
+    #     transformer_outputs = self.model.model(
+    #     inputs_embeds=inputs_embeds,
+    #     attention_mask=attention_mask,
+    #     position_ids=position_ids,
+    #     past_key_values=past_key_values,
+    #     use_cache=use_cache,
+    #     output_attentions=output_attentions,
+    #     output_hidden_states=output_hidden_states,
+    #     return_dict=return_dict,
+    # )
+    #     hidden_states = transformer_outputs[0]  
+
+    #     logits = self.model.lm_head(hidden_states)  
+    #     loss = None
+    #     if labels is not None:
+    #         shift_logits = logits[..., :-1, :].contiguous()
+    #         shift_labels = labels[..., 1:].contiguous()
+            
+    #         loss_fct = torch.nn.CrossEntropyLoss(ignore_index=self.image_processor.IGNORE_INDEX)
+    #         loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
+    #                         shift_labels.view(-1))
+            
+    #         valid_token_mask = (shift_labels != self.image_processor.IGNORE_INDEX)
+    #         # 2. Count the number of True values in the mask
+    #         num_valid_tokens = valid_token_mask.sum().item()
+
+    #         # Now you can use num_valid_tokens
+    #         print(f"Loss: {loss.item()}, Tokens used in loss calculation: {num_valid_tokens}")
+                
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -267,11 +281,15 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
         attention_mask=None,
         position_ids=None,
         max_new_tokens=128,
-        num_beams=1,
-        temperature=1.0,
-        top_p=1.0,
-        do_sample=False,
-        repetition_penalty=1.0,
+    
+    num_beams=4,                # Good for exploring multiple coherent answers
+    do_sample=False,            # Use deterministic beam search
+    early_stopping=True,        # Stop early if possible for efficiency
+
+    # Anti-Repetition Suite (Tune these as needed)
+    # repetition_penalty=1.2,     # REDUCE THIS from 1.5. Start here. Increase to 1.3 if needed.
+    # no_repeat_ngram_size=3,     # Keep this if repetition is severe. Try 2 if it's too restrictive.
+    # length_penalty=0.8,   
         **kwargs
     ):
         """
@@ -281,7 +299,6 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
         device = next(self.parameters()).device
         input_ids = input_ids.to(device)
 
-        # Expand multimodal input if <image> tokens are present
         if images is not None:
             inputs_embeds, labels, attention_mask, position_ids = self.image_processor.prepare_input(
                 input_ids=input_ids,
@@ -291,16 +308,18 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 position_ids=position_ids,
                 past_key_values=None
             )
+            
             outputs = self.model.generate(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 max_new_tokens=max_new_tokens,
                 num_beams=num_beams,
-                temperature=temperature,
-                top_p=top_p,
+                early_stopping=early_stopping,
+                #   no_repeat_ngram_size=no_repeat_ngram_size,    # Block repeating 3-grams
+    # length_penalty=length_penalty,     
                 do_sample=do_sample,
-                repetition_penalty=repetition_penalty,
+                # repetition_penalty=repetition_penalty,
                 **kwargs
             )
         else:
@@ -309,93 +328,16 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 attention_mask=attention_mask,
                 max_new_tokens=max_new_tokens,
                 num_beams=num_beams,
-                temperature=temperature,
-                top_p=top_p,
+                # no_repeat_ngram_size=no_repeat_ngram_size,
+                # length_penalty=length_penalty,
+                early_stopping=early_stopping,
                 do_sample=do_sample,
-                repetition_penalty=repetition_penalty,
+                # repetition_penalty=repetition_penalty,
                 **kwargs
             )
         
         return outputs
-    # @torch.no_grad()
-    # def generate(
-    #     self,
-    #     images,
-    #     texts,
-    #     num_beams=1,
-    #     max_new_tokens=20,
-    #     min_length=1,
-    #     top_p=0.9,
-    #     repetition_penalty=1,
-    #     length_penalty=1,
-    #     temperature=1,
-    #     do_sample=False,
-    #     stop_words_ids=[2],
-    # ):
-    #     """
-    #     Generate responses for a batch of image-text inputs.
-        
-    #     Args:
-    #         images (torch.Tensor): Batch of pre-processed images.
-    #         texts (List[str]): List of text prompts/questions.
-    #         For explanations of other parameters, see Hugging Face Transformers documentation for .generate().
-            
-    #     Returns:
-    #         answers (List[str]): List of generated text responses.
-    #     """
-    #     # 1. Setup stopping criteria (optional)
-    #     # stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(
-    #     #     stops=[torch.tensor([i]).to(self.device) for i in stop_words_ids])])
-
-        
-    #     batch_embs = [self.image_processor.get_context_emb(text, img_list) for text, img_list in zip(texts, image_lists)]
-
-    #     # 4. Create a batched tensor of embeddings and attention mask
-    #     batch_size = len(batch_embs)
-    #     max_len = max([emb.shape[1] for emb in batch_embs])
-    #     emb_dim = batch_embs[0].shape[2]
-    #     dtype = batch_embs[0].dtype
-    #     device = batch_embs[0].device
-
-    #     embs = torch.zeros([batch_size, max_len, emb_dim], dtype=dtype, device=device)
-    #     attn_mask = torch.zeros([batch_size, max_len], dtype=torch.int, device=device)
-    #     for i, emb in enumerate(batch_embs):
-    #         emb_len = emb.shape[1]
-    #         embs[i, -emb_len:] = emb[0] # Right-align the sequences
-    #         attn_mask[i, -emb_len:] = 1  # Set attention mask to 1 for actual data
-
-    #     # 5. Generate tokens using the underlying language model
-    #     with torch.cuda.amp.autocast(enabled=(self.model.dtype == torch.float16)): # Replaces maybe_autocast
-    #         outputs = self.llama_model.generate(
-    #             inputs_embeds=embs,
-    #             attention_mask=attn_mask,
-    #             max_new_tokens=max_new_tokens,
-    #             num_beams=num_beams,
-    #             length_penalty=length_penalty,
-    #             temperature=temperature,
-    #             do_sample=do_sample,
-    #             min_length=min_length,
-    #             top_p=top_p,
-    #             repetition_penalty=repetition_penalty,
-    #             # stopping_criteria=stopping_criteria, # Now using the criteria
-    #             pad_token_id=self.llama_tokenizer.pad_token_id,
-    #             eos_token_id=self.llama_tokenizer.eos_token_id,
-    #         )
-
-    #     # # 6. Decode and clean up the generated outputs
-    #     answers = []
-    #     for output_token in outputs:
-    #         if output_token[0] == 0:  # Sometimes a batch padding token (0) is at the start
-    #             output_token = output_token[1:]
-    #         # Decode the token IDs to text
-    #         output_texts = self.llama_tokenizer.decode(output_token, skip_special_tokens=True)
-    #         # Clean up the output: keep only the model's answer
-    #         # output_texts = output_texts.split('</s>')[0]  # remove the stop sign </s>
-    #         # output_texts = output_texts.replace("<s>", "") # remove any initial start tokens
-    #         # output_texts = output_texts.split(r'[/INST]')[-1].strip() # Extract text after the last instruction prompt
-    #         answers.append(output_texts)
- 
-    #     return answers
+    
 
 if __name__ == "__main__":
     import sys 
@@ -432,7 +374,7 @@ if __name__ == "__main__":
     print("pad_token:", tokenizer.pad_token)
     print("padding_side:", tokenizer.padding_side)
     print("vocab_size:", len(tokenizer))
-    
+    print("eos_token_id:", tokenizer.eos_token_id)
     data_config=full_config["data"]
     train_set, val_set, test_set= load_data(
         train_val_dir=data_config["train_val_dir"],
@@ -455,6 +397,14 @@ if __name__ == "__main__":
         num_workers=0,
         pin_memory=True
     )
+    val_loader=torch.utils.data.DataLoader(
+        val_set,
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=0,
+        pin_memory=True
+    )
     test_loader=torch.utils.data.DataLoader(
         test_set,
         batch_size=2,
@@ -473,12 +423,34 @@ if __name__ == "__main__":
         
         text=batch["full_texts"]
         answer=batch["class_labels"]
-        output=model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-            images=images
-        )
+        print("input_ids", input_ids)
+        # output=model(
+        #     input_ids=input_ids,
+        #     attention_mask=attention_mask,
+        #     labels=labels,
+        #     # images=images
+        # )
+        raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+        print("raw_text", raw_text)
+        break
+    for batch in val_loader:
+        print("val loader mode")
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        labels = batch["labels"].to(device)
+        images = batch["images"].to(device)
+        
+        text=batch["full_texts"]
+        answer=batch["class_labels"]
+        # raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+        # print("raw_text", raw_text)
+        print("input_ids", input_ids)
+        # output=model(
+        #     input_ids=input_ids,
+        #     attention_mask=attention_mask,
+        #     labels=labels,
+        #     # images=images
+        # )
         break
     for batch in test_loader:
         print("test loader mode")
@@ -489,57 +461,40 @@ if __name__ == "__main__":
         images = batch["images"].to(device)
         
         text=batch["full_texts"]
+        # raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+        print("input_ids", input_ids)
+        # print("raw_text", raw_text)
+        # print
         # print("text", text) 
-        answer=batch["class_labels"]
+        # answer=batch["class_labels"]
       
-        with torch.inference_mode():
-            prompt = "Question: What is the symtompt? "
-            inputs = tokenizer(prompt, return_tensors="pt")
+        # with torch.inference_mode():
+        #     prompt = "Question: What is the symtompt? "
+        #     inputs = tokenizer(prompt, return_tensors="pt")
 
-            # Generate
-            input_ids=inputs.input_ids
-            attention_mask=inputs.attention_mask
-            input_ids=input_ids.to("cuda")
-            attention_mask=attention_mask.to("cuda")
+        #     # Generate
+        #     input_ids=inputs.input_ids
+        #     attention_mask=inputs.attention_mask
+        #     input_ids=input_ids.to("cuda")
+        #     attention_mask=attention_mask.to("cuda")
             
-            # generate_ids = model.generate(
-            #     input_ids=input_ids,
-            #     attention_mask=attention_mask,
-            #     max_new_tokens=50,
-            #     pad_token_id=tokenizer.pad_token_id,)
+        #     # generate_ids = model.generate(
+        #     #     input_ids=input_ids,
+        #     #     attention_mask=attention_mask,
+        #     #     max_new_tokens=50,
+        #     #     pad_token_id=tokenizer.pad_token_id,)
             
-            generate_ids = model.generate(
-                input_ids=input_ids,
-                # images=images,
-                attention_mask=attention_mask,
-                max_new_tokens=50,
-                pad_token_id=tokenizer.pad_token_id,)
+        #     generate_ids = model.generate(
+        #         input_ids=input_ids,
+        #         images=images,
+        #         attention_mask=attention_mask,
+        #         max_new_tokens=50,
+        #         pad_token_id=tokenizer.pad_token_id,)
             
             
-            output=tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-            print("output", output)
-            # prompt_texts = batch["full_texts"]   
-            # device="cuda"
-
-            # decode_input=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
-            # print("decode_input", decode_input)
-            # # print("input_ids", input_ids)
-            # # print("attention_mask", attention_mask)
-            # outputs = model.generate(
-            #     # images=images,
-            #     input_ids=input_ids,
-            #     # max_new_tokens=50,
-            #     attention_mask=attention_mask,
-            #     # temperature=0.7,
-            #     # top_p=0.9
-            # )
-            
-            # text=tokenizer.batch_decode(outputs, skip_special_tokens=True)
-
-            # # print("Generated text:", text)
-            # for i in range(len(text)):
-            #     print("Generated text:", text[i])
-            #     # print("Answer:", answer[i])
+        #     output=tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        #     print("output", output)
+  
         break
     
     
