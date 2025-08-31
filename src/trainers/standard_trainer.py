@@ -173,6 +173,7 @@ class StandardTrainer(Trainer):
                 )
                 processed_preds=[]
                 for pred in batch_preds:
+                    print("Pred", pred)
                     preds.append(pred)
                   
                 del generated_ids, batch

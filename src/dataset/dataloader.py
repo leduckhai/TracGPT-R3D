@@ -99,26 +99,47 @@ if __name__ == "__main__":
     test_dir = "pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data"
     image_train_path = "viz_data/train/image"
     image_test_path = "viz_data/test/image"
-    os.makedirs(image_train_path, exist_ok=True)
-    os.makedirs(image_test_path, exist_ok=True)
-    save_3d_data(
-        data_paths=[os.path.join(train_val_dir, f) for f in os.listdir(train_val_dir) if f.endswith('.json')],
-        image_dir=image_train_path,
-        save_path="clean_data/train/3d_data",
-    )
-    save_3d_data(
-        data_paths=[os.path.join(test_dir, f) for f in os.listdir(test_dir) if f.endswith('.json')],
-        image_dir=image_test_path,
-        save_path="clean_data/test/3d_data",
-    )
-    # train_set, val_set, test_set = load_data(
-    #     train_val_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/train/data",
-    #     test_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data",
-    #     image_train_path="clean_data/train/image",
-    #     image_test_path="clean_data/test/image",
-    #     dataset="trac_white",
+    # os.makedirs(image_train_path, exist_ok=True)
+    # os.makedirs(image_test_path, exist_ok=True)
+    # save_3d_data(
+    #     data_paths=[os.path.join(train_val_dir, f) for f in os.listdir(train_val_dir) if f.endswith('.json')],
+    #     image_dir=image_train_path,
+    #     save_path="clean_data/train/3d_data",
     # )
+    # save_3d_data(
+    #     data_paths=[os.path.join(test_dir, f) for f in os.listdir(test_dir) if f.endswith('.json')],
+    #     image_dir=image_test_path,
+    #     save_path="clean_data/test/3d_data",
+    # )
+    train_set, val_set, test_set = load_data(
+        train_val_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/train/data",
+        test_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data",
+        image_train_path="clean_data/train/image",
+        image_test_path="clean_data/test/image",
+        dataset="trac_white",
+    )
     # print("len trainset", len(train_set), len(val_set), len(test_set))
+    answer_set=set()
+    for i, sample in enumerate(train_set):
+        # if i == 3:
+        #     break
+        # print(sample.keys())
+        Q1 = sample["Q1"]
+        A1 = sample["A1"]
+        Q2 = sample["Q2"]
+        A2 = sample["A2"]
+        Q3 = sample["Q3"]
+        A3 = sample["A3"]
+        Q4 = sample["Q4"]
+        A4 = sample["A4"]
+        
+        answer_set.add(A4)
+    print("answer set", answer_set)
+        # # print("slice order", slice_order)
+        # print("Q1", Q1)
+        # # Q1: bbox
+
+        # print("A1", A1)
     # for i, sample in enumerate(test_set):
     #     # if i == 3:
     #     #     break

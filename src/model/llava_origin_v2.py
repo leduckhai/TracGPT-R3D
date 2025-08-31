@@ -420,6 +420,7 @@ if __name__ == "__main__":
         pin_memory=True,
     )
 
+    answer_set=set()
     for batch in train_loader:
         print("train loader mode")
         input_ids = batch["input_ids"].to(device)
@@ -429,37 +430,41 @@ if __name__ == "__main__":
 
         text = batch["full_texts"]
         answer = batch["class_labels"]
-        print("input_ids", input_ids)
-        class_labels = batch["class_labels"]
-        # output=model(
-        #     input_ids=input_ids,
-        #     attention_mask=attention_mask,
-        #     labels=labels,
-        #     # images=images
-        # )
-        raw_text = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
-        print("raw_text", raw_text)
-        break
-    for batch in val_loader:
-        print("val loader mode")
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        labels = batch["labels"].to(device)
-        images = batch["images"].to(device)
-
-        text = batch["full_texts"]
-        answer = batch["class_labels"]
-        print("answer", answer)
-        # raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
-        # print("raw_text", raw_text)
+        for a in answer:
+            answer_set.add(a)
+    print("answer_set", answer_set)
         # print("input_ids", input_ids)
-        # output=model(
-        #     input_ids=input_ids,
-        #     attention_mask=attention_mask,
-        #     labels=labels,
-        #     # images=images
-        # )
-        break
+        # class_labels = batch["class_labels"]
+        # # output=model(
+        # #     input_ids=input_ids,
+        # #     attention_mask=attention_mask,
+        # #     labels=labels,
+        # #     # images=images
+        # # )
+        # raw_text = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+        # print("raw_text", raw_text)
+        # break
+    # for batch in val_loader:
+    #     print("val loader mode")
+    #     input_ids = batch["input_ids"].to(device)
+    #     attention_mask = batch["attention_mask"].to(device)
+    #     labels = batch["labels"].to(device)
+    #     images = batch["images"].to(device)
+
+    #     text = batch["full_texts"]
+    #     answer = batch["class_labels"]
+    #     print("answer", answer)
+    #     # raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+    #     # print("raw_text", raw_text)
+    #     # print("input_ids", input_ids)
+    #     # output=model(
+    #     #     input_ids=input_ids,
+    #     #     attention_mask=attention_mask,
+    #     #     labels=labels,
+    #     #     # images=images
+    #     # )
+    #     break
+    answer_set=set()
     for batch in test_loader:
         print("test loader mode")
         input_ids = batch["input_ids"].to(device)
@@ -473,9 +478,10 @@ if __name__ == "__main__":
 
         text = batch["full_texts"]
         answer = batch["class_labels"]
-        print("answer", answer)
+        for a in answer:
+            answer_set.add(a)
         # raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
-        print("input_ids", input_ids)
+        # print("input_ids", input_ids)
         # print("raw_text", raw_text)
         # print
         # print("text", text)
@@ -507,4 +513,5 @@ if __name__ == "__main__":
         #     output=tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         #     print("output", output)
 
-        break
+        # break
+    print("answer_set", answer_set)
