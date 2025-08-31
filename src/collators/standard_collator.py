@@ -23,65 +23,61 @@ class StandardCollator:
         print("PAD TOKEN", self.pad_token_id)
         
     def __call__(self, batch):
-   
-        images = []
-        batch_input_ids = []
-        batch_attention_masks = []
-        batch_labels = []
-        full_texts = []
-        class_labels = []
-        p_ids = []
+        images, batch_input_ids, batch_attention_masks, batch_labels = [], [], [], []
+        full_texts, class_labels, p_ids = [], [], []
 
         for sample in batch:
-            image = sample['image'].unsqueeze(0)
+            # Handle image
+            image = sample["image"]  # assume [C,H,W]
             images.append(image)
-            p_ids.append(sample.get('P_ID', ''))
+            p_ids.append(sample.get("P_ID", ""))
 
-            question = sample['Q4'][0] if isinstance(sample['Q4'], list) else sample['Q4']
-            answer = sample['answer']
-            if len(answer)>0:
-                answer=answer.strip()+self.tokenizer.eos_token
-            answer_text=  answer
-            status = sample['A4']
+            # Handle text
+            question = sample["Q4"][0] if isinstance(sample["Q4"], list) else sample["Q4"]
+            answer = sample["answer"].strip()
+            if answer:
+                answer += self.tokenizer.eos_token
+
+            status = sample["A4"]
             class_labels.append(status)
 
-            question_text = f"   Question: {question}" + " left_context " +str(self.image_token) + " right_context  answer:" 
-            full_text = question_text +   answer_text
-
-            
-            sample["text"] = full_text
+            question_text = f"Question: {question} left_context {self.image_token} right_context answer:"
+            full_text = question_text + answer
             full_texts.append(full_text)
 
-            # Tokenize the full text (this should match the labels structure)
+            # Tokenize full sequence
             tokenized = self.tokenizer(
                 full_text,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self.max_length,
                 padding=False,
-                add_special_tokens=False
+                add_special_tokens=False,  # we already handle EOS
             )
-            input_ids = tokenized.input_ids[0]  # [seq_len]
-            attention_mask = tokenized.attention_mask[0]  # [seq_len]
+            input_ids = tokenized.input_ids[0]
+            attention_mask = tokenized.attention_mask[0]
 
-            question_tokenized = self.tokenizer(
+            # Tokenize only the question part (no special tokens)
+            q_tok = self.tokenizer(
                 question_text,
                 return_tensors="pt",
-                add_special_tokens=False,
                 truncation=True,
-                padding=False
+                max_length=self.max_length,
+                padding=False,
+                add_special_tokens=False,
             )
-            question_length = len(question_tokenized.input_ids[0])
-            
+            q_len = len(q_tok.input_ids[0])
+
+            # Create labels (mask out question)
             labels = torch.full_like(input_ids, fill_value=self.IGNORE_INDEX)
-            
-            if len(labels) > question_length:
-                labels[question_length:] = input_ids[question_length:].clone()
+            if len(labels) > q_len:
+                labels[q_len:] = input_ids[q_len:].clone()
 
             batch_input_ids.append(input_ids)
             batch_attention_masks.append(attention_mask)
             batch_labels.append(labels)
 
+        # Pad to batch
         batch_input_ids = torch.nn.utils.rnn.pad_sequence(
             batch_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
@@ -91,11 +87,9 @@ class StandardCollator:
         batch_labels = torch.nn.utils.rnn.pad_sequence(
             batch_labels, batch_first=True, padding_value=self.IGNORE_INDEX
         )
+        images_tensor = torch.stack(images)  # [B,C,H,W]
 
-        images_tensor = torch.stack(images)
-        
-
-        processed = {
+        return {
             "input_ids": batch_input_ids,
             "attention_mask": batch_attention_masks,
             "labels": batch_labels,
@@ -105,7 +99,6 @@ class StandardCollator:
             "p_ids": p_ids,
         }
 
-        return processed
 
     def _create_labels(self, input_ids: torch.Tensor, question: str, answer: str) -> torch.Tensor:
         """
