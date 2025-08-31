@@ -15,7 +15,7 @@ class StandardTrainer(Trainer):
         model.train()
         with torch.no_grad(): 
             batch = {
-                # 'images': inputs['images'].to(model.device, non_blocking=True),
+                'images': inputs['images'].to(model.device, non_blocking=True),
                 'input_ids': inputs['input_ids'].to(model.device, non_blocking=True),
                 'attention_mask': inputs['attention_mask'].to(model.device, non_blocking=True),
                 'labels': inputs['labels'].to(model.device, non_blocking=True)
@@ -55,7 +55,7 @@ class StandardTrainer(Trainer):
             for i, inputs in enumerate(tqdm(data_loader, desc="EVAL GENERATING")):
               
                 batch = {
-                    # 'images': inputs['images'].to(model.device, non_blocking=True),
+                    'images': inputs['images'].to(model.device, non_blocking=True),
                     'input_ids': inputs['input_ids'].to(model.device, non_blocking=True),
                     'attention_mask': inputs['attention_mask'].to(model.device, non_blocking=True),
                     'labels': inputs['labels'].to(model.device, non_blocking=True)
@@ -73,7 +73,7 @@ class StandardTrainer(Trainer):
                         "eval/mem_alloc": torch.cuda.memory_allocated()/1e9  # Monitor memory
                     }, step=self.state.global_step)
         return {
-            "eval/loss": sum(losses)/len(losses)
+            "eval_loss": sum(losses)/len(losses)
         }
        
         # refs = []
@@ -129,13 +129,13 @@ class StandardTrainer(Trainer):
         tokenizer = self.tokenizer
         preds = []
         refs = [] 
-
+        raw_preds = []
         torch.cuda.empty_cache()
         
         dataloader = self.get_eval_dataloader(eval_dataset)
         
         with torch.inference_mode():
-            for i, inputs in enumerate(tqdm(dataloader, desc="Generating")):
+            for i, inputs in enumerate(tqdm(dataloader, desc="Inference")):
                 
                 p_ids=inputs.get("p_ids", [])
                 print("P_IDs in batch:", p_ids)
@@ -144,26 +144,26 @@ class StandardTrainer(Trainer):
                 
                 full_texts = inputs.get("full_texts", [])
                 class_labels = inputs.get("class_labels", [])
+                images=inputs.get("images", []).to(self.model.device)
+                
+                
                 refs.extend(class_labels)  
-                # tokenizer.padding_side = "left"
-                # tokenizer.truncation_side = "left"   
+                
                 enc = tokenizer(
                     full_texts,
                     padding=True,
                     truncation=True,
-                    # max_length=3,
                      max_length=300,
                     return_tensors="pt"
                  ).to(self.model.device)
                 generated_ids = self.model.generate(
-                    # images=batch["images"],
+                    images=images,
                     input_ids=enc.input_ids,
                     attention_mask=enc.attention_mask,
                     max_new_tokens=max_new_tokens,
                     # num_beams=num_beams,
                     eos_token_id=tokenizer.eos_token_id,
                     pad_token_id=tokenizer.pad_token_id
-                    # early_stopping=True, 
                 )
                 
                 batch_preds = tokenizer.batch_decode(
@@ -173,36 +173,18 @@ class StandardTrainer(Trainer):
                 )
                 processed_preds=[]
                 for pred in batch_preds:
-                    answer = extract_answer(pred, tokenizer)
-                    processed_preds.append(answer)
-                    print(f"Extracted answer: {answer}")
+                    preds.append(pred)
                   
-                    preds.append(answer)
-                
-                
-                if i % log_text_steps == 0:
-                    
-                    print(f"Pred: {processed_preds}")
-                    if full_texts:
-                            print(f"Ref: {full_texts}")
-                
                 del generated_ids, batch
                 torch.cuda.empty_cache()
         
         metrics = {"num_samples": len(preds)}
-        print("refs", refs,len(refs), "preds", len(preds))
-        if refs and len(refs) == len(preds):
-            matches = sum(1 for p, r in zip(preds, refs) if p.strip() == r.strip())
-            metrics["eval/precision"] = matches / len(preds)
-            if self.tracker:
-                self.tracker.log({"eval/precision": metrics["eval/precision"]}, step=self.state.global_step)
-        elif refs:
-            print(f"Warning: {len(preds)} preds vs {len(refs)} refs - skipping precision calc")
+        print("preds", len(preds))
+        
         with open(inference_file, "w") as f:
             json.dump({
-                "metrics": metrics,
                 "predictions": preds,
-                "references": refs if refs else None
+                "references": refs
             }, f, indent=4)
             
         return metrics
