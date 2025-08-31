@@ -40,12 +40,12 @@ class StandardCollator:
             question = sample['Q4'][0] if isinstance(sample['Q4'], list) else sample['Q4']
             answer = sample['answer']
             if len(answer)>0:
-                answer=answer+" "+self.tokenizer.eos_token
-            answer_text= " answer: "+ answer
+                answer=answer.strip()+self.tokenizer.eos_token
+            answer_text=  answer
             status = sample['A4']
             class_labels.append(status)
 
-            question_text = f"   Question: {question}" + " left context " +str(self.image_token) + " right context\n" 
+            question_text = f"   Question: {question}" + " left_context " +str(self.image_token) + " right_context  answer:" 
             full_text = question_text +   answer_text
 
             
@@ -59,7 +59,7 @@ class StandardCollator:
                 truncation=True,
                 max_length=self.max_length,
                 padding=False,
-                add_special_tokens=True
+                add_special_tokens=False
             )
             input_ids = tokenized.input_ids[0]  # [seq_len]
             attention_mask = tokenized.attention_mask[0]  # [seq_len]
@@ -67,8 +67,8 @@ class StandardCollator:
             question_tokenized = self.tokenizer(
                 question_text,
                 return_tensors="pt",
-                add_special_tokens=True,
-                truncation=False,
+                add_special_tokens=False,
+                truncation=True,
                 padding=False
             )
             question_length = len(question_tokenized.input_ids[0])
@@ -142,7 +142,6 @@ class StandardCollator:
             if len(answer_token_ids) == 0:
                 return -1
             
-            # Search for answer tokens in the full sequence
             full_seq = input_ids.tolist()
             answer_seq = answer_token_ids.tolist()
             
@@ -151,7 +150,6 @@ class StandardCollator:
                 if full_seq[i:i+len(answer_seq)] == answer_seq:
                     return i
             
-            # If exact match not found, try to find the first token of answer
             first_token = answer_seq[0]
             for i, token_id in enumerate(full_seq):
                 if token_id == first_token:

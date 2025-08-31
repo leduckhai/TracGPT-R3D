@@ -6,49 +6,58 @@ import torch
 from transformers import AutoTokenizer
 from src.model.llava_origin_v2 import TracLlavaForCausalLM,TracConfig
 from transformers import AutoModelForCausalLM
-def load_model(config,pretrained_path=None,lora=False):
+def load_model(config, pretrained_path=None, lora=False):
+    base_model_name = config["config"]["language_model"]["name"]
+    print("base_model_name", base_model_name)
 
-  
-        base_model_name=config["config"]["language_model"]["name"]
-        print("base_model_name",base_model_name)
-        
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-        if config["name"] == "vit_llama":
-            custom_config = config["config"]
-            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-            base_model_name = custom_config["language_model"]["name"]
-            print("Loading base model:", base_model_name)
-            new_tokens = ["<image>", "<PAD>"]
-            tokenizer.add_tokens(new_tokens, special_tokens=True)
-            tokenizer.pad_token = "<PAD>"
-            print(f"Set pad_token : {tokenizer.pad_token}")
-            if not pretrained_path:
-                print("Loading TracLlamaForCausalLM")
-                base_model_name = custom_config["language_model"]["name"]
-               
-                config=TracConfig(custom_config)
-                model = TracLlavaForCausalLM(config,tokenizer=tokenizer)
-                model.adjust_embeddings_from_num_new_tokens(len(new_tokens))
-                return tokenizer, model
-            else:
-                print("Loading pretrained model from:", pretrained_path)
-                custom_config = config["config"]
-                config=TracConfig(custom_config)
-                if lora:
-                    print("Loading LoRA weights")
-                    from peft import PeftModel
-                    base_model = TracLlavaForCausalLM(config=config,tokenizer=tokenizer)
-                    model = PeftModel.from_pretrained(base_model, pretrained_path)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
 
-                    model = model.merge_and_unload()
-                    return tokenizer, model
-            
-                else:
-                    print("Loading full model weights")
-                    model = TracLlavaForCausalLM.from_pretrained(pretrained_path, config=config)
-                    model.adjust_embeddings_from_num_new_tokens(len(new_tokens))
-                return tokenizer, model
-        
+    new_tokens = ["<image>", "<PAD>"]
+    special_tokens_dict = {}
+    if "<image>" not in tokenizer.get_vocab():
+        special_tokens_dict["additional_special_tokens"] = ["<image>"]
+    if tokenizer.pad_token is None:
+        special_tokens_dict["pad_token"] = "<PAD>"
+
+    if special_tokens_dict:
+        tokenizer.add_special_tokens(special_tokens_dict)
+
+    print(f"Tokenizer vocab size after adding: {len(tokenizer)}")
+    print(f"pad_token = {tokenizer.pad_token}")
+
+    custom_config = config["config"]
+
+    if not pretrained_path:
+        print("Loading TracLlavaForCausalLM from scratch")
+        trac_config = TracConfig(custom_config)
+        model = TracLlavaForCausalLM(trac_config, tokenizer=tokenizer)
+        model.adjust_embeddings_from_num_new_tokens(len(tokenizer) - model.model.config.vocab_size)
+        return tokenizer, model
+
+    print("Loading pretrained model from:", pretrained_path)
+    trac_config = TracConfig(custom_config)
+
+    if lora:
+        print("Loading LoRA weights")
+        from peft import PeftModel
+
+        base_model = TracLlavaForCausalLM(trac_config, tokenizer=tokenizer)
+        base_model.adjust_embeddings_from_num_new_tokens(len(tokenizer) - base_model.model.config.vocab_size)
+        model = PeftModel.from_pretrained(base_model, pretrained_path)
+        return tokenizer, model
+
+    else:
+        print("Loading full model weights into wrapper")
+        model = TracLlavaForCausalLM(trac_config, tokenizer=tokenizer)
+        state_dict = torch.load(f"{pretrained_path}/pytorch_model.bin", map_location="cpu")
+
+        model.model.resize_token_embeddings(len(tokenizer))
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print("Missing keys:", missing)
+        print("Unexpected keys:", unexpected)
+
+        return tokenizer, model
     
 if __name__ == "__main__":
     import os

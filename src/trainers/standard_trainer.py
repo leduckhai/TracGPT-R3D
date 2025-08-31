@@ -137,11 +137,7 @@ class StandardTrainer(Trainer):
         with torch.inference_mode():
             for i, inputs in enumerate(tqdm(dataloader, desc="Inference")):
                 
-                p_ids=inputs.get("p_ids", [])
-                print("P_IDs in batch:", p_ids)
-                batch = {k: v.to(self.model.device) for k, v in inputs.items() 
-                        if isinstance(v, torch.Tensor)}
-                
+             
                 full_texts = inputs.get("full_texts", [])
                 class_labels = inputs.get("class_labels", [])
                 images=inputs.get("images", []).to(self.model.device)

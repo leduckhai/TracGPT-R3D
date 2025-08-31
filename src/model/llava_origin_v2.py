@@ -266,7 +266,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 )
             )
 
-        #     print("inputs_embeds shape", inputs_embeds.shape,"labels shape", labels.shape,"attention_mask shape", attention_mask.shape,"position_ids shape", position_ids.shape)
+      
 
         transformer_outputs = self.model(
             inputs_embeds=inputs_embeds,
@@ -289,13 +289,8 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
         attention_mask=None,
         position_ids=None,
         max_new_tokens=128,
-        num_beams=4,  # Good for exploring multiple coherent answers
-        do_sample=False,  # Use deterministic beam search
-        early_stopping=True,  # Stop early if possible for efficiency
-        # Anti-Repetition Suite (Tune these as needed)
-        # repetition_penalty=1.2,     # REDUCE THIS from 1.5. Start here. Increase to 1.3 if needed.
-        # no_repeat_ngram_size=3,     # Keep this if repetition is severe. Try 2 if it's too restrictive.
-        # length_penalty=0.8,
+        num_beams=4,  
+        do_sample=False,  
         **kwargs
     ):
         """
@@ -323,11 +318,8 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 position_ids=position_ids,
                 max_new_tokens=max_new_tokens,
                 num_beams=num_beams,
-                early_stopping=early_stopping,
-                #   no_repeat_ngram_size=no_repeat_ngram_size,    # Block repeating 3-grams
-                # length_penalty=length_penalty,
+       
                 do_sample=do_sample,
-                # repetition_penalty=repetition_penalty,
                 **kwargs
             )
         else:
@@ -336,11 +328,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 attention_mask=attention_mask,
                 max_new_tokens=max_new_tokens,
                 num_beams=num_beams,
-                # no_repeat_ngram_size=no_repeat_ngram_size,
-                # length_penalty=length_penalty,
-                early_stopping=early_stopping,
                 do_sample=do_sample,
-                # repetition_penalty=repetition_penalty,
                 **kwargs
             )
 
