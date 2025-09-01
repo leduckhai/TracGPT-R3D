@@ -25,3 +25,4 @@ DATASET
 
 only_2d 
 pretrained_ViT.bin
+clean_data_old

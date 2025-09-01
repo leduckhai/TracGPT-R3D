@@ -90,7 +90,7 @@ base_transform_2d=Compose(
 # train_transform = mtf.Compose(
 #         [
 #             mtf.RandRotate90d(keys=["image"], prob=0.5, spatial_axes=(1, 2)),
-#             mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=0),
+#             mtf.RandFlipd(keys=["image"], prob=0.10, spatial_axis=0),
 #             mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=1),
 #             mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=2),
 #             mtf.RandScaleIntensityd(keys="image", factors=0.1, prob=0.5),

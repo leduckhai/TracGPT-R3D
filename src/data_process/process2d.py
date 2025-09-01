@@ -93,7 +93,7 @@ def main():
     # os.makedirs(cache_dir, exist_ok=True)
     
     # Load dataset
-    ds_path="tungvu3196/vlm-project-with-images-with-bbox-images-v4"
+    ds_path="tungvu3196/vlm-project-with-images-with-bbox-images-official-ordered-columns"
     try:
         from datasets import disable_caching
         disable_caching()

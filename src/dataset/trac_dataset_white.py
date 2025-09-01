@@ -51,7 +51,6 @@ class TracDatasetWhite(Dataset):
         path, sample_idx = self.sample_indices[idx]
         with open(path, "r") as f:
             data_point = json.load(f)[sample_idx]
-        # print("Loading data point:", data_point)
         image = self._load_image(data_point["Patient ID"], data_point["slice order"])
         image = self.base_transform({"image": image})["image"].squeeze(0)
         if self.mode!="train":

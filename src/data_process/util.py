@@ -67,12 +67,24 @@ def group_and_merge_3d_bboxes_v2(bboxes_slice, num_concat=50,
                                  overlap_threshold=0.8, discard_inner_iou=0.9,
                                  min_slices=2, continuity_threshold=0.5):
 
+    """
+    Group and merge 3D bounding boxes from 2D bounding boxes per slice
+    :param bboxes_slice: list of 2D bounding boxes per slice
+    :param num_concat: number of slices to concatenate
+    :param img_size: image size (width, height)
+    :param eps: epsilon for clustering
+    :param max_objects_k: maximum number of objects to keep
+    :param overlap_threshold: minimum overlap between 2D bounding boxes to consider them the same object
+    :param discard_inner_iou: minimum IoU between 2D bounding boxes to discard inner boxes
+    :param min_slices: minimum number of slices to form a 3D bounding box
+    :param continuity_threshold: minimum continuity of 2D bounding boxes to form a 3D bounding box
+    :return: list of 3D bounding boxes
+    """
     if not bboxes_slice:
         return []
 
     width, height = img_size if img_size else (1, 1)
 
-    # Group slice indices with similar boxes
     slice_groups = []
 
     for i, current_boxes in enumerate(bboxes_slice):

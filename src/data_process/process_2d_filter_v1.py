@@ -11,7 +11,6 @@ from PIL import Image
 import nibabel as nib
 from util import sort_files, group_and_merge_3d_bboxes_v2, group_files
 import logging
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,7 +63,7 @@ class DataProcessor:
             total_data += len(patient_data)
 
         logger.info(f"Total data processed for {split}: {total_data}")
-
+        logger.info(f"Processed data saved to: {save_data_dir}")
     def _process_patient(self, p_id, source_dir, save_data_dir):
         """Process data for a single patient."""
         with open(os.path.join(source_dir, "data", f"{p_id}.json"), "rb") as f:
@@ -152,19 +151,6 @@ class DataProcessor:
         """Convert (H, W, 3) RGB to (H, W) grayscale using standard weights."""
         return np.dot(img_rgb[..., :3], [0.2989, 0.5870, 0.1140])
 
-    @staticmethod
-    def fuzzy_contains(s, d, threshold=0.9):
-        """Check if substring `d` approximately exists in `s` with given similarity threshold."""
-        len_d = len(d)
-        if len_d == 0:
-            return True
-
-        best_ratio = max(
-            SequenceMatcher(None, s[i:i + len_d], d).ratio()
-            for i in range(len(s) - len_d + 1)
-        )
-        return best_ratio >= threshold
-
     def merge_slices(self, list_slices, slice_data_map):
         """Merge data from multiple slices into a single output."""
         slice_data = [slice_data_map[s] for s in list_slices]
@@ -180,7 +166,7 @@ class DataProcessor:
             "A2": self.merge_A2_data(self.merge_A3_data([slice["A3"] for slice in slice_data])),
             "A4": self.merge_A4_data([slice["A4"] for slice in slice_data]),
             "bbox_3d": group_and_merge_3d_bboxes_v2(
-                [slice["A1"] for slice in slice_data]),
+                [ast.literal_eval(slice["A1"]) for slice in slice_data]),
             "slice order": list_slices
         }
 
@@ -226,21 +212,24 @@ class DataProcessor:
 
     def merge_A4_data(self, list_A4):
         """Merge A4 (dementia status) data."""
-        degree_levels = [
-            "Status (Non-Dementia)",
-            "Status (Mild-Dementia)",
-            "Status (Moderate-Dementia)",
-        ]
+       
+        degree_levels={
+            "non": "Non-Dementia",
+            "mild": "Mild-Dementia",
+            "moderate": "Moderate-Dementia"
+        }
 
         if not list_A4:
             logger.warning("Empty A4 list, defaulting to Non-Dementia")
             return "Non-Dementia"
 
         cleaned_list = [str(s) for s in list_A4 if s is not None]
+        for level,description in reversed(degree_levels.items()):
         
-        for level in reversed(degree_levels):
-            if any(self.fuzzy_contains(s.lower(), level.lower()) for s in cleaned_list):
-                return level
+            for s in cleaned_list:
+                if level.lower() in s.lower():
+                    print("match s", s, " for", level)
+                    return description
 
         logger.warning(f"No dementia level found in A4, defaulting to Non-Dementia: {cleaned_list}")
         return "Non-Dementia"
