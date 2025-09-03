@@ -1,0 +1,130 @@
+data:
+  data_root: "./data/"
+  dataset: "trac_white"
+  train_val_split: 0.8
+
+  #  temporary split train test
+  # train_val_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data
+  # test_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data
+  # image_train_path: /root/VLMTrac/2d_data/train/image
+  # image_test_path: /root/VLMTrac/2d_data/test/image
+
+# TracGPT-R3D/pseudo_3d/32_overlap_slices/1fe5ec57-44e2-402e-8ea1-c3e8ef1d47fb
+  train_val_dir: pseudo_3d/32_overlap_slices/f0627f84-70bf-42d2-aa9c-31dc850a94d8/train/data
+  test_dir: pseudo_3d/32_overlap_slices/f0627f84-70bf-42d2-aa9c-31dc850a94d8/test/data
+  image_train_path: clean_data/train/image
+  image_test_path: clean_data/test/image
+
+
+  dataset_config: 
+    only_2d: True
+
+  # train_sample: -1
+  # val_sample: -1
+  # test_sample: -1
+  train_sample: -1
+  val_sample: -1
+  test_sample: -1
+
+  # train_sample: -1
+  # train_sample: 20
+  # val_sample: 5
+  # test_sample: 5
+  dataloader_pin_memory: False
+  
+
+general:
+  max_eval: 2
+  trainer: standard
+  collator: "standard"
+
+  lora: True
+  # lora_r: 8
+  # lora_alpha: 16
+
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj","gate_proj", "up_proj", "down_proj",        
+        # "lm_head",                                  
+        "embed_tokens",]
+  lora_bias: "none"
+
+#   lora_r: 32
+# lora_alpha: 64
+# lora_dropout: 0.05
+
+
+model:
+  tags: [llama, ViT]
+  name: vit_llama
+  config:
+    language_model: 
+      name: meta-llama/Llama-3.2-3B
+    vision_encoder:
+        pretrained_path: pretrained_ViT.bin
+        vision_tower: vit3d
+        img_size: [32, 256, 256]
+        patch_size: [4, 16, 16]
+        in_channels: 1
+        hidden_size: 768
+        num_heads: 8
+        vision_select_layer: -1
+        vision_select_feature: cls_patch
+
+    projector:
+      image_size: [32, 256, 256]
+      patch_size: [4, 16, 16]
+      out_channels: 256
+      in_channels: 2048
+
+      in_embed: 768
+      hidden_size: 1024
+      out_embed: 3072
+
+      layer_type: mlp
+      layer_num: 1
+      pooling_type: spatial
+      pooling_size: 2
+      # mm_projector_type: linear
+      # mm_projector_type: minigpt
+      mm_projector_type: linear
+  
+  
+
+
+training:
+  output_dir: "./output"
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  num_train_epochs: 2
+  logging_dir: "./logs"  
+  eval_strategy: "steps"
+  # eval_steps: 50
+  # logging_steps: 50
+  # save_steps: 50
+  
+  eval_steps: 2
+  logging_steps: 10
+  save_steps: 10
+
+  save_strategy: "steps"
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: false
+  dataloader_num_workers: 4
+  save_total_limit: 2
+  load_best_model_at_end: true
+  report_to: wandb
+  remove_unused_columns: false
+  seed: 42
+  fp16: False
+  bf16: False
+  metric_for_best_model: loss
+  # greater_is_better: True
+  greater_is_better: False
+  save_safetensors: False
+  dataloader_pin_memory: False

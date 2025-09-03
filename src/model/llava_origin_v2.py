@@ -5,7 +5,12 @@ import sys
 from transformers.configuration_utils import PretrainedConfig
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 
-sys.path.append("/root/TracGPT-R3D")
+# sys.path.append("/root/TracGPT-R3D")
+import os
+from dotenv import load_dotenv
+load_dotenv()
+ROOT=os.getenv("ROOT")
+sys.path.append(ROOT)
 from transformers.generation.utils import GenerationMixin
 from src.model.vision_encoder.load_encoder import load_vision_encoder
 from src.model.projector.projector import load_mm_projector
@@ -344,7 +349,7 @@ if __name__ == "__main__":
 
     # config_path="/root/TracGPT-R3D/config/vit_llama_3B.yaml"
     # config_path="/root/TracGPT-R3D/config/vit_phi1B.yaml"
-    config_path = "/root/TracGPT-R3D/config/vit_llama_3B.yaml"
+    config_path = "/workspace/TracGPT-R3D/config/vit_llama_3B_80GB.yaml"
     with open(config_path, "r") as f:
         full_config = yaml.safe_load(f)
     custom_config = full_config["model"]["config"]
@@ -418,9 +423,8 @@ if __name__ == "__main__":
 
         text = batch["full_texts"]
         answer = batch["class_labels"]
-        for a in answer:
-            answer_set.add(a)
-    print("answer_set", answer_set)
+        print("image shape", images.shape)
+        break
         # print("input_ids", input_ids)
         # class_labels = batch["class_labels"]
         # # output=model(
@@ -452,22 +456,22 @@ if __name__ == "__main__":
     #     #     # images=images
     #     # )
     #     break
-    answer_set=set()
-    for batch in test_loader:
-        print("test loader mode")
-        input_ids = batch["input_ids"].to(device)
-        print(
-            "decoded input_ids",
-            tokenizer.batch_decode(input_ids, skip_special_tokens=True),
-        )
-        attention_mask = batch["attention_mask"].to(device)
-        labels = batch["labels"].to(device)
-        images = batch["images"].to(device)
+    # answer_set=set()
+    # for batch in test_loader:
+    #     print("test loader mode")
+    #     input_ids = batch["input_ids"].to(device)
+    #     print(
+    #         "decoded input_ids",
+    #         tokenizer.batch_decode(input_ids, skip_special_tokens=True),
+    #     )
+    #     attention_mask = batch["attention_mask"].to(device)
+    #     labels = batch["labels"].to(device)
+    #     images = batch["images"].to(device)
 
-        text = batch["full_texts"]
-        answer = batch["class_labels"]
-        for a in answer:
-            answer_set.add(a)
+    #     text = batch["full_texts"]
+    #     answer = batch["class_labels"]
+    #     for a in answer:
+    #         answer_set.add(a)
         # raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         # print("input_ids", input_ids)
         # print("raw_text", raw_text)
@@ -502,4 +506,4 @@ if __name__ == "__main__":
         #     print("output", output)
 
         # break
-    print("answer_set", answer_set)
+    # print("answer_set", answer_set)

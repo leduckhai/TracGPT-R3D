@@ -267,7 +267,7 @@ class DataProcessor:
 
 if __name__ == "__main__":
     config = {
-        'desc_path': "/root/TracGPT-R3D/src/data_process/desc.json",
+        'desc_path': "/workspace/TracGPT-R3D/src/data_process/desc.json",
         'source_root': "clean_data",
         'target_root': "pseudo_3d",
         'num_concat': 32,

@@ -167,12 +167,10 @@ class StandardTrainer(Trainer):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=True  
                 )
-                processed_preds=[]
                 for pred in batch_preds:
                     print("Pred", pred)
                     preds.append(pred)
                   
-                del generated_ids, batch
                 torch.cuda.empty_cache()
         
         metrics = {"num_samples": len(preds)}

@@ -27,12 +27,12 @@ class StandardCollator:
         full_texts, class_labels, p_ids = [], [], []
 
         for sample in batch:
-            # Handle image
             image = sample["image"]  # assume [C,H,W]
+            image=image.unsqueeze(0)
+            # print("image shape",image.shape)
             images.append(image)
             p_ids.append(sample.get("P_ID", ""))
 
-            # Handle text
             question = sample["Q4"][0] if isinstance(sample["Q4"], list) else sample["Q4"]
             answer = sample["answer"].strip()
             if answer:
@@ -45,7 +45,6 @@ class StandardCollator:
             full_text = question_text + answer
             full_texts.append(full_text)
 
-            # Tokenize full sequence
             tokenized = self.tokenizer(
                 full_text,
                 return_tensors="pt",
@@ -57,7 +56,6 @@ class StandardCollator:
             input_ids = tokenized.input_ids[0]
             attention_mask = tokenized.attention_mask[0]
 
-            # Tokenize only the question part (no special tokens)
             q_tok = self.tokenizer(
                 question_text,
                 return_tensors="pt",
@@ -68,7 +66,6 @@ class StandardCollator:
             )
             q_len = len(q_tok.input_ids[0])
 
-            # Create labels (mask out question)
             labels = torch.full_like(input_ids, fill_value=self.IGNORE_INDEX)
             if len(labels) > q_len:
                 labels[q_len:] = input_ids[q_len:].clone()
@@ -77,7 +74,6 @@ class StandardCollator:
             batch_attention_masks.append(attention_mask)
             batch_labels.append(labels)
 
-        # Pad to batch
         batch_input_ids = torch.nn.utils.rnn.pad_sequence(
             batch_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
@@ -88,7 +84,7 @@ class StandardCollator:
             batch_labels, batch_first=True, padding_value=self.IGNORE_INDEX
         )
         images_tensor = torch.stack(images)  # [B,C,H,W]
-
+        # print("images tensor shape", images_tensor.shape)
         return {
             "input_ids": batch_input_ids,
             "attention_mask": batch_attention_masks,
