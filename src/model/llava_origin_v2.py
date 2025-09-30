@@ -5,7 +5,6 @@ import sys
 from transformers.configuration_utils import PretrainedConfig
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 
-# sys.path.append("/root/TracGPT-R3D")
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -18,6 +17,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers import StoppingCriteria, StoppingCriteriaList
 from transformers import LlamaForCausalLM
 from transformers import LlamaConfig
+import numpy as np
+from src.model.base_model import BaseModel
 
 CONTROLLER_HEART_BEAT_EXPIRATION = 30
 WORKER_HEART_BEAT_INTERVAL = 15
@@ -34,7 +35,6 @@ DEFAULT_IM_END_TOKEN = "<im_end>"
 IMAGE_PLACEHOLDER = "<image-placeholder>"
 
 
-# class TracLlamaConfig(LlamaConfig):
 class TracConfig(PretrainedConfig):
     model_type = "trac"
 
@@ -78,11 +78,14 @@ class LlavaImageProcessor:
                 image_features = self.vision_encoder(image)
         else:
             image_features = self.vision_encoder(image)
-
+        # print("stats image features",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
         image_features = self.mm_projector(image_features)
+        print("image feature after projector shape", image_features.shape)
+        # print("stats image features after projector",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
 
         return image_features
-
+   
+                   
     def embed_tokens(self, input_ids):
         return self.model.model.embed_tokens(input_ids)
 
@@ -97,14 +100,12 @@ class LlavaImageProcessor:
     ):
 
         B, T = input_ids.shape
-        # print("input id", input_ids)
         if images is None:
             print("images is None, use text only")
             text_embeds = self.embed_tokens(input_ids)
             position_ids = torch.arange(
                 0, T, dtype=torch.long, device=input_ids.device
             ).repeat(B, 1)
-            # print("text embed", text_embeds, position_ids, attention_mask,position_ids)
             return text_embeds, labels, attention_mask, position_ids
         image_features = self.encode_single_image(images)
 
@@ -155,7 +156,7 @@ class LlavaImageProcessor:
 
             for t in range(T):
                 if is_image_token[b, t]:
-                    seq_embeds.append(image_features[b])  # [Vi, D]
+                    seq_embeds.append(image_features[b])  
                     seq_labels.append(
                         torch.full(
                             (Vi,),
@@ -189,39 +190,54 @@ class LlavaImageProcessor:
                 new_position_ids[b, :current_length] = torch.arange(
                     current_length, device=input_ids.device
                 )
-        # print("input_embeds", input_embeds,"new_labels", new_labels,"new_attention_mask", new_attention_mask,"new_position_ids", new_position_ids)
+      
         return input_embeds, new_labels, new_attention_mask, new_position_ids
 
 
-class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
+class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
     config_class = TracConfig
 
     def __init__(self, config, tokenizer=None):
-        super().__init__(config)
+        BaseModel.__init__(self, tokenizer)
+        super().__init__(config)      
         cfg = config.custom_config
-
         base_model_name = cfg["language_model"]["name"]
         print("Loading trac base model:", base_model_name)
-
         self.model = LlamaForCausalLM.from_pretrained(
             base_model_name,
             torch_dtype=torch.float16,
         )
-
         self.tokenizer = tokenizer
-
         print("Len model before vocab", self.model.config.vocab_size)
-
         self.model.resize_token_embeddings(len(tokenizer))
         print("Len model after vocab", self.model.config.vocab_size)
+        # self.image_processor = LlavaImageProcessor(self.model, cfg, tokenizer)
+    
+        self.vision_encoder = load_vision_encoder(config["vision_encoder"])
+        self.mm_projector = load_mm_projector(config["projector"])
 
-        self.image_processor = LlavaImageProcessor(self.model, cfg, tokenizer)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.vision_encoder.to(device)  
+        self.mm_projector.to(device)
 
+        if config.get("freeze_vision_encoder", True):
+            for param in self.vision_encoder.parameters():
+                param.requires_grad = False
+                
+    def freeze_llm(self):
+        for name, p in self.model.named_parameters():
+            if "lora" in name.lower():
+                print("Freezing", name)
+                p.requires_grad = False
+    def unfreeze_llm(self):
+        for name, p in self.model.named_parameters():
+            if "lora" in name.lower():
+                print("Unfreezing", name)
+                p.requires_grad = True
     def adjust_embeddings_from_num_new_tokens(self, num_new_tokens):
         with torch.no_grad():
             old_embeddings = self.model.get_input_embeddings().weight.data
             old_embeddings_avg = old_embeddings[:-num_new_tokens, :].mean(dim=0)
-
             new_embeddings = self.model.get_input_embeddings().weight.data
             new_embeddings[-num_new_tokens:, :] = old_embeddings_avg
 
@@ -242,6 +258,22 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
             return self.model.lm_head
         else:
             return None
+        
+    def encode_single_image(self, image):
+        """Encode a single image with safety checks"""
+        image = image.to(self.device)
+
+        if self.freeze_vision_encoder:
+            with torch.no_grad():
+                image_features = self.vision_encoder(image)
+        else:
+            image_features = self.vision_encoder(image)
+        # print("stats image features",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
+        image_features = self.mm_projector(image_features)
+        print("image feature after projector shape", image_features.shape)
+        # print("stats image features after projector",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
+
+        return image_features
 
     def forward(
         self,
@@ -261,7 +293,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds, labels, attention_mask, position_ids = (
-                self.image_processor.prepare_input(
+                self.prepare_input(
                     input_ids=input_ids,
                     images=images,
                     labels=labels,
@@ -270,8 +302,6 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                     past_key_values=past_key_values,
                 )
             )
-
-      
 
         transformer_outputs = self.model(
             inputs_embeds=inputs_embeds,
@@ -284,6 +314,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
+                    
         return transformer_outputs
 
     @torch.no_grad()
@@ -294,7 +325,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
         attention_mask=None,
         position_ids=None,
         max_new_tokens=128,
-        num_beams=4,  
+        num_beams=1, 
         do_sample=False,  
         **kwargs
     ):
@@ -307,7 +338,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
 
         if images is not None:
             inputs_embeds, labels, attention_mask, position_ids = (
-                self.image_processor.prepare_input(
+                self.prepare_input(
                     input_ids=input_ids,
                     images=images,
                     labels=None,
@@ -325,6 +356,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 num_beams=num_beams,
        
                 do_sample=do_sample,
+               
                 **kwargs
             )
         else:
@@ -334,6 +366,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel):
                 max_new_tokens=max_new_tokens,
                 num_beams=num_beams,
                 do_sample=do_sample,
+               
                 **kwargs
             )
 
@@ -347,9 +380,8 @@ if __name__ == "__main__":
     from src.collators.load_collator import load_collator
     import yaml
 
-    # config_path="/root/TracGPT-R3D/config/vit_llama_3B.yaml"
-    # config_path="/root/TracGPT-R3D/config/vit_phi1B.yaml"
-    config_path = "/workspace/TracGPT-R3D/config/vit_llama_3B_80GB.yaml"
+    config_path="/root/TracGPT-R3D/config/vit_llama_3B.yaml"
+    # config_path = "/workspace/TracGPT-R3D/config/vit_llama_3B_80GB.yaml"
     with open(config_path, "r") as f:
         full_config = yaml.safe_load(f)
     custom_config = full_config["model"]["config"]
@@ -404,6 +436,14 @@ if __name__ == "__main__":
         num_workers=0,
         pin_memory=True,
     )
+    val_loader = torch.utils.data.DataLoader(
+        val_set,
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=0,
+        pin_memory=True,
+    )
     test_loader = torch.utils.data.DataLoader(
         test_set,
         batch_size=2,
@@ -414,17 +454,155 @@ if __name__ == "__main__":
     )
 
     answer_set=set()
-    for batch in train_loader:
-        print("train loader mode")
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        labels = batch["labels"].to(device)
-        images = batch["images"].to(device)
 
-        text = batch["full_texts"]
-        answer = batch["class_labels"]
-        print("image shape", images.shape)
-        break
+    file_path="debug_dump.txt"
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        print(f"{file_path} deleted.")
+    else:
+        print(f"{file_path} does not exist.")
+    print("model", model.mm_projector)
+    for i,batch in enumerate(train_loader):
+        with torch.no_grad():
+            print("train loader mode")
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+            images = batch["images"].to(device)
+            text = batch["full_texts"]
+            answer = batch["class_labels"]
+            print("full text",text)
+            non_neg_indices = torch.nonzero(labels != -100, as_tuple=False)
+            print("corresponding input_ids", input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]])
+            print("decoded corresponding input_ids", tokenizer.batch_decode(input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]], skip_special_tokens=False))
+            # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
+            
+            output=model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+                # images=images
+            )
+            generate_ids = model.generate(
+            input_ids=input_ids,
+            images=images,
+            attention_mask=attention_mask,
+            max_new_tokens=50,
+            pad_token_id=tokenizer.pad_token_id,)
+
+            output=tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+            print("output", output)
+            break
+           
+    # for i,batch in enumerate(train_loader):
+    #     with torch.no_grad():
+    #         print("train loader mode")
+    #         input_ids = batch["input_ids"].to(device)
+    #         attention_mask = batch["attention_mask"].to(device)
+    #         labels = batch["labels"].to(device)
+    #         images = batch["images"].to(device)
+    #         text = batch["full_texts"]
+    #         answer = batch["class_labels"]
+    #         print("full text",text)
+    #         non_neg_indices = torch.nonzero(labels != -100, as_tuple=False)
+    #         print("corresponding input_ids", input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]])
+    #         print("decoded corresponding input_ids", tokenizer.batch_decode(input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]], skip_special_tokens=False))
+    #         # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
+            
+    #         # output=model(
+    #         #     input_ids=input_ids,
+    #         #     attention_mask=attention_mask,
+    #         #     labels=labels,
+    #         #     # images=images
+    #         # )
+    #         if i==20:
+    #             break
+    # for i,batch in enumerate(val_loader):
+    #     with torch.no_grad():
+    #         print("val loader mode")
+    #         input_ids = batch["input_ids"].to(device)
+    #         attention_mask = batch["attention_mask"].to(device)
+    #         labels = batch["labels"].to(device)
+    #         images = batch["images"].to(device)
+    #         text = batch["full_texts"]
+    #         answer = batch["class_labels"]
+    #         print("full text",text)
+    #         non_neg_indices = torch.nonzero(labels != -100, as_tuple=False)
+    #         print("corresponding input_ids", input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]])
+    #         print("decoded corresponding input_ids", tokenizer.batch_decode(input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]], skip_special_tokens=False))
+    #         # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
+            
+    #         # output=model(
+    #         #     input_ids=input_ids,
+    #         #     attention_mask=attention_mask,
+    #         #     labels=labels,
+    #         #     images=images
+    #         # )
+    #         if i==10:
+    #             break
+    # for i,batch in enumerate(test_loader):  
+    #     with torch.no_grad():
+    #         print("test loader mode")
+    #         input_ids = batch["input_ids"].to(device)
+    #         attention_mask = batch["attention_mask"].to(device)
+    #         labels = batch["labels"].to(device)
+    #         images = batch["images"].to(device)
+    #         text = batch["full_texts"]
+    #         answer = batch["class_labels"]
+    #         print("full text",text)
+    #         non_neg_indices = torch.nonzero(labels != -100, as_tuple=False)
+    #         print("corresponding input_ids", input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]])
+    #         print("decoded corresponding input_ids", tokenizer.batch_decode(input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]], skip_special_tokens=False))
+    #         # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
+            
+    #         # output=model(
+    #         #     input_ids=input_ids,
+    #         #     attention_mask=attention_mask,
+    #         #     labels=labels,
+    #         #     images=images
+    #         # )
+    #         if i==10:
+    #             break
+        
+    # for i,batch in enumerate(val_loader):
+    #     print("val loader mode")
+    #     with torch.no_grad():
+    #         input_ids = batch["input_ids"].to(device)
+    #         attention_mask = batch["attention_mask"].to(device)
+    #         images = batch["images"].to(device)
+    #         text = batch["full_texts"]
+    #         answer = batch["class_labels"]
+    #         print("full text",text)
+    #         # print("non neg indices", non_neg_indices)
+    #         # print("corresponding input_ids", input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]])
+    #         # print("decoded corresponding input_ids", tokenizer.batch_decode(input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]], skip_special_tokens=False))
+    #         # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
+    #         print("input_id", input_ids.shape, input_ids)
+    #         print("attention_mask", attention_mask.shape, attention_mask)
+    #         print("images", images.shape)
+    #         output=model(
+    #             input_ids=input_ids,
+    #             attention_mask=attention_mask,
+    #             images=images
+    #         )
+    #         if i==10:
+    #             break
+    # for i,batch in enumerate(test_loader):
+    #     print("test loader mode")
+    #     with torch.no_grad():
+    #         input_ids = batch["input_ids"].to(device)
+    #         attention_mask = batch["attention_mask"].to(device)
+            
+    #         labels = batch["labels"].to(device)
+    #         images = batch["images"].to(device)
+    #         text = batch["full_texts"]
+    #         answer = batch["class_labels"]
+    #         print("input",text)
+    #         raw_text=tokenizer.batch_decode(input_ids, skip_special_tokens=False)
+    #         print("raw_text", raw_text)
+    #         if i==6:
+    #             break
+        
         # print("input_ids", input_ids)
         # class_labels = batch["class_labels"]
         # # output=model(

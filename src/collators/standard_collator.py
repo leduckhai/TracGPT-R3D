@@ -6,17 +6,23 @@ import numpy as np
 import torch.nn.functional as F
 import sys 
 sys.path.append("/root/TracGPT-R3D")
-
+import random
 
 class StandardCollator:
-    def __init__(self, tokenizer, max_length: int = 512,extra_config:dict=None):
+    def __init__(self, tokenizer, mode="train"):
         print("StandardCollator initialized")
         self.tokenizer = tokenizer
-        self.max_length = max_length
+        self.mode = mode        
         self.image_token = "<image>"
         self.IGNORE_INDEX = -100
-        self.answer_word_token="answer: "
-        self.asnwer_word_tokenized=self.tokenizer.encode(self.answer_word_token,add_special_tokens=False)
+        self.answer_word_text = "|answer|"
+        self.answer_word_token=self.tokenizer(
+                self.answer_word_text,
+                return_tensors="pt",
+                truncation=True,
+                padding=False,
+                add_special_tokens=False
+            )
         self.pad_token_id=self.tokenizer.pad_token_id 
         if self.pad_token_id is None:
             self.pad_token_id=self.tokenizer.eos_token_id
@@ -24,51 +30,53 @@ class StandardCollator:
         
     def __call__(self, batch):
         images, batch_input_ids, batch_attention_masks, batch_labels = [], [], [], []
-        full_texts, class_labels, p_ids = [], [], []
+        full_texts, class_labels, p_ids,question_texts = [], [], [],[]
 
         for sample in batch:
-            image = sample["image"]  # assume [C,H,W]
-            image=image.unsqueeze(0)
-            # print("image shape",image.shape)
+            image = sample["image"]
             images.append(image)
             p_ids.append(sample.get("P_ID", ""))
-
-            question = sample["Q4"][0] if isinstance(sample["Q4"], list) else sample["Q4"]
+            idx=random.randrange(len(sample["Q4"]))
+            question=sample["question"]
             answer = sample["answer"].strip()
-            if answer:
-                answer += self.tokenizer.eos_token
-
             status = sample["A4"]
             class_labels.append(status)
-
-            question_text = f"Question: {question} left_context {self.image_token} right_context answer:"
-            full_text = question_text + answer
-            full_texts.append(full_text)
-
-            tokenized = self.tokenizer(
-                full_text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=self.max_length,
-                padding=False,
-                add_special_tokens=False,  # we already handle EOS
-            )
-            input_ids = tokenized.input_ids[0]
-            attention_mask = tokenized.attention_mask[0]
-
-            q_tok = self.tokenizer(
+            question_text = f"|Question|: {question}  {self.image_token}  "
+            question_texts.append(question)
+            full_text=question_text + self.answer_word_text 
+            question_token=self.tokenizer(
                 question_text,
                 return_tensors="pt",
                 truncation=True,
-                max_length=self.max_length,
                 padding=False,
                 add_special_tokens=False,
             )
-            q_len = len(q_tok.input_ids[0])
-
+            if len(answer) and self.mode == "train":
+                answer += self.tokenizer.eos_token
+                full_text = full_text + " " + answer
+                answer_token=self.tokenizer(
+                    answer,
+                    return_tensors="pt",
+                    truncation=True,
+                    padding=False,
+                    add_special_tokens=False,
+                )
+           
+                input_ids=torch.cat([question_token.input_ids[0],self.answer_word_token.input_ids[0],answer_token.input_ids[0]],dim=0)
+                attention_mask=torch.cat([question_token.attention_mask[0],self.answer_word_token.attention_mask[0],answer_token.attention_mask[0]],dim=0)
+            else:
+                input_ids=torch.cat([question_token.input_ids[0],self.answer_word_token.input_ids[0]],dim=0)
+                attention_mask=torch.cat([question_token.attention_mask[0],self.answer_word_token.attention_mask[0]],dim=0)
+            
+            full_texts.append(full_text)
+            
+            # answer_idx=torch.where(input_ids==self.answer_word_token[0])[0]
+            # if len(answer_idx)>0:
+            #     q_len=answer_idx[0]+1
+            q_len=len(question_token.input_ids[0])+len(self.answer_word_token.input_ids[0])  
             labels = torch.full_like(input_ids, fill_value=self.IGNORE_INDEX)
-            if len(labels) > q_len:
-                labels[q_len:] = input_ids[q_len:].clone()
+            # if len(labels) > q_len:
+            labels[q_len:] = input_ids[q_len:].clone()
 
             batch_input_ids.append(input_ids)
             batch_attention_masks.append(attention_mask)
@@ -83,8 +91,7 @@ class StandardCollator:
         batch_labels = torch.nn.utils.rnn.pad_sequence(
             batch_labels, batch_first=True, padding_value=self.IGNORE_INDEX
         )
-        images_tensor = torch.stack(images)  # [B,C,H,W]
-        # print("images tensor shape", images_tensor.shape)
+        images_tensor = torch.stack(images)  
         return {
             "input_ids": batch_input_ids,
             "attention_mask": batch_attention_masks,
@@ -92,79 +99,10 @@ class StandardCollator:
             "images": images_tensor,
             "full_texts": full_texts,
             "class_labels": class_labels,
+            "question_texts": question_texts,   
             "p_ids": p_ids,
         }
-
-
-    def _create_labels(self, input_ids: torch.Tensor, question: str, answer: str) -> torch.Tensor:
-        """
-        Create labels with proper masking for question and answer tokens.
-        """
-        labels = input_ids.clone()
-        labels[:] = self.IGNORE_INDEX  # Start by ignoring everything
         
-        answer_start_idx = self._find_answer_start(input_ids, answer)
-        
-        if answer_start_idx != -1:
-            labels[answer_start_idx:] = input_ids[answer_start_idx:]
-        
-        if self.tokenizer.pad_token_id is not None:
-            labels[input_ids == self.tokenizer.pad_token_id] = self.IGNORE_INDEX
-        
-        return labels
-
-
-    def _find_answer_start(self, input_ids: torch.Tensor, answer: str) -> int:
-        """
-        Find the start position of the answer in the tokenized sequence.
-        """
-        if not answer.strip():
-            return -1
-        
-        try:
-            answer_token_ids = self.tokenizer.encode(
-                answer, 
-                add_special_tokens=False,
-                return_tensors="pt"
-            )[0]
-            
-            if len(answer_token_ids) == 0:
-                return -1
-            
-            full_seq = input_ids.tolist()
-            answer_seq = answer_token_ids.tolist()
-            
-            # Try to find the answer sequence
-            for i in range(len(full_seq) - len(answer_seq) + 1):
-                if full_seq[i:i+len(answer_seq)] == answer_seq:
-                    return i
-            
-            first_token = answer_seq[0]
-            for i, token_id in enumerate(full_seq):
-                if token_id == first_token:
-                    return i
-                    
-            return -1
-            
-        except Exception as e:
-            print(f"Error finding answer start: {e}")
-            return -1
-
-        
-def find_sublist_index(full_list, sublist):
-    """
-    Finds the starting index of a sublist within a larger list.
-    Returns -1 if not found.
-    """
-    if not sublist:
-        return -1
-        
-    sublen = len(sublist)
-    for i in range(len(full_list) - sublen + 1):
-        if full_list[i:i+sublen] == sublist:
-            return i
-    return -1
-
 if __name__ == "__main__":
     from src.dataset.dataloader import load_data
     train_set, val_set, test_set = load_data(
@@ -181,14 +119,22 @@ if __name__ == "__main__":
     collator = StandardCollator(tokenizer)
     train_loader = torch.utils.data.DataLoader(
         train_set,
-        batch_size=1,
+        batch_size=3,
         shuffle=True,
         collate_fn=collator,
         num_workers=0,
         pin_memory=True,
     )
-    for i, batch in enumerate(train_loader):
-        if i >= 1:
+    val_loader = torch.utils.data.DataLoader(
+        val_set,
+        batch_size=3,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=0,
+        pin_memory=True,
+    )
+    for i, batch in enumerate(val_loader):
+        if i >= 3:
             break
         images = batch["images"]
         input_ids = batch["input_ids"]

@@ -39,11 +39,8 @@ def load_data(
         os.path.join(test_dir, record) for record in os.listdir(test_dir)
     ]
     train_paths, val_paths = train_test_split(
-        train_data_paths, test_size=0.1, random_state=42
+        train_data_paths, test_size=0.1, random_state=12
     )
-    # print("train paths", len(train_paths),train_paths)
-    # print("val paths", len(val_paths),val_paths)
-    # print("test paths", len(test_data_paths),test_data_paths) 
     train_set = dataset(
         data_paths=train_paths,
         image_path=image_train_path,
@@ -111,35 +108,139 @@ if __name__ == "__main__":
     #     image_dir=image_test_path,
     #     save_path="clean_data/test/3d_data",
     # )
-    train_set, val_set, test_set = load_data(
-        train_val_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/train/data",
-        test_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data",
-        image_train_path="clean_data/train/image",
-        image_test_path="clean_data/test/image",
-        dataset="trac_white",
-    )
-    # print("len trainset", len(train_set), len(val_set), len(test_set))
-    answer_set=set()
-    for i, sample in enumerate(train_set):
-        # if i == 3:
-        #     break
-        # print(sample.keys())
-        Q1 = sample["Q1"]
-        A1 = sample["A1"]
-        Q2 = sample["Q2"]
-        A2 = sample["A2"]
-        Q3 = sample["Q3"]
-        A3 = sample["A3"]
-        Q4 = sample["Q4"]
-        A4 = sample["A4"]
+    # train_set, val_set, test_set = load_data(
+    #     train_val_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/train/data",
+    #     test_dir="pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data",
+    #     image_train_path="clean_data/train/image",
+    #     image_test_path="clean_data/test/image",
+    #     dataset="trac_white",
+    # )
+    # # print("len trainset", len(train_set), len(val_set), len(test_set))
+    # answer_set=set()
+    # for i, sample in enumerate(train_set):
+    #     if i == 3:
+    #         break
+    #     # print(sample.keys())
+    #     Q1 = sample["Q1"]
+    #     A1 = sample["A1"]
+    #     Q2 = sample["Q2"]
+    #     A2 = sample["A2"]
+    #     Q3 = sample["Q3"]
+    #     A3 = sample["A3"]
+    #     Q4 = sample["Q4"]
+    #     A4 = sample["A4"]
         
-        answer_set.add(A4)
-    print("answer set", answer_set)
+    #     answer_set.add(A4)
+    # print("answer set", answer_set)
         # # print("slice order", slice_order)
         # print("Q1", Q1)
         # # Q1: bbox
+    from src.dataset.dataloader import load_data
+    from src.collators.load_collator import load_collator
+    import yaml
+    from transformers import AutoTokenizer
+    import torch
 
-        # print("A1", A1)
+    config_path="/root/TracGPT-R3D/config/vit_llama_3B.yaml"
+    # config_path = "/workspace/TracGPT-R3D/config/vit_llama_3B_80GB.yaml"
+    with open(config_path, "r") as f:
+        full_config = yaml.safe_load(f)
+    custom_config = full_config["model"]["config"]
+    base_model_name = custom_config["language_model"]["name"]
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+    base_model_name = custom_config["language_model"]["name"]
+    print("Loading base model:", base_model_name)
+
+    new_tokens = ["<image>", "<PAD>"]
+    tokenizer.add_tokens(new_tokens, special_tokens=True)
+    tokenizer.pad_token = "<PAD>"
+    print("pad token id:", tokenizer.pad_token_id)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("\nAfter modification:")
+    print("pad_token:", tokenizer.pad_token)
+    print("padding_side:", tokenizer.padding_side)
+    print("vocab_size:", len(tokenizer))
+    print("eos_token_id:", tokenizer.eos_token_id)
+    data_config = full_config["data"]
+    train_set, val_set, test_set = load_data(
+        train_val_dir=data_config["train_val_dir"],
+        test_dir=data_config["test_dir"],
+        image_train_path=data_config["image_train_path"],
+        image_test_path=data_config["image_test_path"],
+        dataset=data_config["dataset"],
+        train_sample=data_config["train_sample"],
+        val_sample=data_config["val_sample"],
+        test_sample=data_config["test_sample"],
+        dataset_config=data_config["dataset_config"],
+    )
+    
+    for i in range(len(train_set)):
+        sample = train_set[i]
+        label=sample["answer"]
+        print("train label", label)
+        
+        # if i >= 20:
+        #     break
+
+    # collator = load_collator(full_config["general"]["collator"], tokenizer=tokenizer)
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_set,
+    #     batch_size=2,
+    #     shuffle=True,
+    #     collate_fn=collator,
+    #     num_workers=0,
+    #     pin_memory=True,
+    # )
+    # val_loader = torch.utils.data.DataLoader(
+    #     val_set,
+    #     batch_size=2,
+    #     shuffle=False,
+    #     collate_fn=collator,
+    #     num_workers=0,
+    #     pin_memory=True,
+    # )
+    # val_loader = torch.utils.data.DataLoader(
+    #     val_set,
+    #     batch_size=2,
+    #     shuffle=False,
+    #     collate_fn=collator,
+    #     num_workers=0,
+    #     pin_memory=True,
+    # )
+    # test_loader = torch.utils.data.DataLoader(
+    #     test_set,
+    #     batch_size=2,
+    #     shuffle=False,
+    #     collate_fn=collator,
+    #     num_workers=0,
+    #     pin_memory=True,
+    # )
+    # for i, batch in enumerate(train_loader):
+    #     print("train loader")
+    #     images = batch["images"]
+    #     print("image load shape", images.shape)
+    #     # print("A1", A1)   
+    #     if i >= 3:
+    #         break
+    # for i, batch in enumerate(val_loader):
+    #     print("val loader")
+    #     images = batch["images"]
+    #     # status_criteria = batch["status_criteria"]
+    #     print("images  load shape", images.shape)
+    #     if i >= 3:
+    #         break
+       
+    #     # print("status_criteria", status_criteria)
+    # for i, batch in enumerate(test_loader):
+    #     print("test loader")
+    #     images = batch["images"]
+      
+    #     # status_criteria = batch["status_criteria"]
+    #     print("images load shape", images.shape)
+    #     if i >= 3:
+    #         break
+       
+        # print("status_criteria", status_criteria)
     # for i, sample in enumerate(test_set):
     #     # if i == 3:
     #     #     break

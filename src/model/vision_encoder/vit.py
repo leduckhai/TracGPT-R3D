@@ -154,12 +154,24 @@ class ViT3DTower(nn.Module):
         }
 
         vit_kwargs = {k: v for k, v in vit_kwargs.items() if v is not None}
+        mapping_rules = [
+            ("patch_embedding.patch_embeddings.weight", "patch_embedding.patch_embeddings.1.weight"),
+            ("patch_embedding.patch_embeddings.bias", "patch_embedding.patch_embeddings.1.bias"),            
+        ]
 
         self.vision_tower = ViT(**vit_kwargs)
         if pretrained_path is not None:
             try:
                 state_dict = torch.load(pretrained_path, map_location="cpu")
-
+                if mapping_rules:
+                    new_state = {}
+                    for k, v in state_dict.items():
+                        new_k = k
+                        for frm, to in mapping_rules:
+                            if frm in new_k:
+                                new_k = new_k.replace(frm, to)
+                        new_state[new_k] = v
+                    state_dict = new_state
                 missing_keys, unexpected_keys = self.vision_tower.load_state_dict(state_dict, strict=False)
 
                 print(f"Number of layers in pre-trained weights: {len(state_dict.keys())}")

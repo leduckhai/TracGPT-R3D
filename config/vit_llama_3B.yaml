@@ -2,16 +2,11 @@ data:
   data_root: "./data/"
   dataset: "trac_white"
   train_val_split: 0.8
-
-  #  temporary split train test
-  # train_val_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/train/data
-  # test_dir: /root/TracGPT-R3D/pseudo_3d/32_overlap_slices/1ad40bdc-da39-4dd8-9d3a-27ce00e754fa/test/data
-  # image_train_path: /root/VLMTrac/2d_data/train/image
-  # image_test_path: /root/VLMTrac/2d_data/test/image
-
-
-  train_val_dir: pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/train/data
-  test_dir: pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data
+  # train_val_dir: pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/train/data
+  # test_dir: pseudo_3d/32_overlap_slices/820ac9e9-3f29-498d-b717-466d44081411/test/data
+  
+  train_val_dir: pseudo_3d/32_overlap_slices/4f6cab46-2746-48c2-a8fc-cff454b3e15a/train/data
+  test_dir: pseudo_3d/32_overlap_slices/4f6cab46-2746-48c2-a8fc-cff454b3e15a/test/data
   image_train_path: clean_data/train/image
   image_test_path: clean_data/test/image
 
@@ -19,22 +14,22 @@ data:
   dataset_config: 
     only_2d: True
 
-  train_sample: -1
-  val_sample: -1
-  test_sample: -1
-  # train_sample: 10
-  # val_sample: 10
-  # test_sample: 2
+  train_sample: 5
+  val_sample: 3
+  test_sample: 5
+  # train_sample: -1
+  # val_sample: 50
+  # test_sample: -1
 
   # train_sample: -1
   # train_sample: 20
   # val_sample: 5
   # test_sample: 5
-  dataloader_pin_memory: False
+  dataloader_pin_memory: False8
   
 
 general:
-  max_eval: 2
+  max_eval: 8
   trainer: standard
   collator: "standard"
 
@@ -42,12 +37,15 @@ general:
   # lora_r: 8
   # lora_alpha: 16
 
-  lora_r: 32
-  lora_alpha: 64
+  # lora_r: 128
+  # lora_alpha: 256
+  lora_r: 64
+  lora_alpha: 128
   lora_dropout: 0.05
   lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj","gate_proj", "up_proj", "down_proj",        
         # "lm_head",                                  
-        "embed_tokens",]
+        # "embed_tokens",
+        ]
   lora_bias: "none"
 
 #   lora_r: 32
@@ -79,16 +77,17 @@ model:
       in_channels: 2048
 
       in_embed: 768
-      hidden_size: 1024
+      # hidden_size: 1024
+      hiddend_dim: 1072
       out_embed: 3072
 
       layer_type: mlp
       layer_num: 1
       pooling_type: spatial
       pooling_size: 2
-      # mm_projector_type: linear
       # mm_projector_type: minigpt
-      mm_projector_type: linear
+      mm_projector_type: spp
+      # mm_projector_type: linear
   
   
 

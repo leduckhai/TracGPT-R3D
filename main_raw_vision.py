@@ -4,7 +4,6 @@ import torch
 from src.dataset.dataloader import load_data
 from transformers import TrainingArguments
 from datetime import datetime
-from src.trainers.raw_vision_trainer import RawVisionTrainer
 from src.trainers.tracker import WandbTracker, DummyTracker
 import argparse
 from dataclasses import dataclass
@@ -82,9 +81,7 @@ def parse_cli_args():
     )
     parser.add_argument("--test", action="store_true", help="Run in test mode")
     parser.add_argument("--pretrained_path", type=str, default=None, help="Path to pretrained model")
-    parser.add_argument("--use_lora", type=bool, default=True, help="Use LoRA in pretrained model") 
-
-    
+    parser.add_argument("--use_lora", type=bool, default=True, help="Use LoRA in pretrained model")  
     return parser.parse_args()
 
 
@@ -213,7 +210,6 @@ def main():
             )
         if training_config.gradient_checkpointing:
             model.gradient_checkpointing_enable()
-        # model.to(training_config.device)
         model.to("cuda")
         
         if general_config.max_eval != -1:
@@ -233,7 +229,9 @@ def main():
             training_config.eval_steps = eval_steps
             training_config.save_steps = eval_steps
             
+        # model.freeze_llm()
         custom_trainer = load_trainer(trainer_name=general_config.trainer)
+        
         trainer = custom_trainer(
             model=model,
             tracker=tracker,
@@ -243,10 +241,10 @@ def main():
             eval_dataset=val_set,
             data_collator=collator,
         )
+        print_trainable_params(model)
         trainer.train()
-        print_info("Training complete!")
-        print("Inference on test set")
-        test_results = trainer.inference(eval_dataset=test_set, )
+
+        trainer.inference(eval_dataset=test_set )
     
         tracker.on_train_end()
 

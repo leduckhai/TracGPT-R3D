@@ -6,7 +6,11 @@ from monai.transforms import Compose, ResizeD, EnsureChannelFirstD, SqueezeDimD
 from monai.transforms import ScaleIntensityRanged
 import monai.transforms as mtf
 import torch
+from monai.utils import set_determinism
 
+import torchio as tio
+
+set_determinism(seed=68)  
 class TrackCrop(MapTransform):
     """
     Apply CropForeground and record the cropping origin to adjust bboxes.
@@ -51,14 +55,14 @@ class ResizeBboxAndImage(MapTransform):
 base_transform_3d=Compose(
             [
                 EnsureChannelFirstD(keys=["image"], channel_dim="no_channel"),
-                ScaleIntensityRanged(
-                    keys=["image"],
-                    a_min=0,
-                    a_max=255,
-                    b_min=0.0,
-                    b_max=1.0,
-                    clip=True,
-                ),
+                # ScaleIntensityRanged(
+                #     keys=["image"],
+                #     a_min=0,
+                #     a_max=255,
+                #     b_min=0.0,
+                #     b_max=1.0,
+                #     clip=True,
+                # ),
                 ResizeD(
                     keys=["image"],
                     spatial_size=[32, 256, 256],
@@ -67,40 +71,15 @@ base_transform_3d=Compose(
                 ),
             ]
         )
-base_transform_2d=Compose(
-    [
-        EnsureChannelFirstD(keys=["image"], channel_dim="no_channel"), 
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=0,
-            a_max=255,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
-        ResizeD(
-            keys=["image"],
-            spatial_size=[-1,256, 256], 
-            # mode="bilinear",  
-            mode="trilinear",
-            size_mode="all",
-        ),
-    ]
-)
-# train_transform = mtf.Compose(
-#         [
-#             mtf.RandRotate90d(keys=["image"], prob=0.5, spatial_axes=(1, 2)),
-#             mtf.RandFlipd(keys=["image"], prob=0.10, spatial_axis=0),
-#             mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=1),
-#             mtf.RandFlipd(keys=["image", "seg"], prob=0.10, spatial_axis=2),
-#             mtf.RandScaleIntensityd(keys="image", factors=0.1, prob=0.5),
-#             mtf.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.5),
-#             mtf.ToTensord(keys=["image"], dtype=torch.float),
-#         ]
-#     )
 
-# val_transform = mtf.Compose(
-#     [
-#         mtf.ToTensord(keys=["image"], dtype=torch.float),
-#     ]
-# )
+train_transform = mtf.Compose([
+    mtf.EnsureChannelFirstd(keys=["image"]),                  # (1, D, H, W)
+    mtf.RandRotate90d(keys=["image"], prob=0.5, spatial_axes=(2, 3)),  # rotate H×W
+    mtf.RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),           # flip depth
+    mtf.RandFlipd(keys=["image"], prob=0.5, spatial_axis=2),           # flip height
+    mtf.RandFlipd(keys=["image"], prob=0.5, spatial_axis=3),           # flip width
+    mtf.RandScaleIntensityd(keys="image", factors=0.1, prob=0.5),
+    mtf.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.5),
+    # mtf.ToTensord(keys=["image"], dtype=torch.float),
+])
+

@@ -87,12 +87,17 @@ class FullLinear(nn.Module):
     def __init__(self, in_dim,hidden_dim, out_dim):
         super(FullLinear, self).__init__()
         self.projector=nn.Sequential(
-               nn.Linear(in_dim, out_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-            nn.Linear(out_dim,out_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
+              nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, mid_dim),
+            nn.GELU(),
+            nn.Linear(mid_dim, out_dim),
+            nn.LayerNorm(out_dim)   #
+            #    nn.Linear(in_dim, out_dim),
+            # nn.ReLU(inplace=True),
+            # nn.Dropout(0.1),
+            # nn.Linear(out_dim,out_dim),
+            # nn.ReLU(inplace=True),
+            # nn.Dropout(0.1),
             )
         self._init_weights()
     def _init_weights(self):
@@ -120,13 +125,14 @@ def load_mm_projector(config):
         nn.Module: The initialized multimodal projector.
     """
     if config["mm_projector_type"] == 'linear':
-        return FullLinear(in_dim=config["in_embed"], hidden_dim=config["hidden_size"], out_dim=config["out_embed"])
+        return FullLinear(in_dim=config["in_embed"], hidden_dim=config["hidden_dim"], out_dim=config["out_embed"])
     elif config["mm_projector_type"] == 'spp':
+        print("using spatial pooling projector")
         return SpatialPoolingProjector(
             image_size=config["image_size"],
             patch_size=config["patch_size"],
-            in_dim=config["in_dim"],
-            out_dim=config["out_dim"],
+            in_dim=config["in_embed"],
+            out_dim=config["out_embed"],
             layer_type=config["layer_type"],
             layer_num=config["layer_num"],
             pooling_type=config["pooling_type"],

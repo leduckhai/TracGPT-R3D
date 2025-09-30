@@ -1,11 +1,8 @@
 import sys 
 sys.path.append("/root/TracGPT-R3D")
-from src.model.vision_encoder.rcnn import TrainableFasterRCNN
-# from src.model.language.llama import TracLlamaForCausalLM, TracLlamaConfig, prepare_multi_modal_input
 import torch
 from transformers import AutoTokenizer
 from src.model.llava_origin_v2 import TracLlavaForCausalLM,TracConfig
-from transformers import AutoModelForCausalLM
 def load_model(config, pretrained_path=None, lora=False):
     base_model_name=config["config"]["language_model"]["name"]
     print("base_model_name",base_model_name)
@@ -23,10 +20,8 @@ def load_model(config, pretrained_path=None, lora=False):
         if not pretrained_path:
             print("Loading TracLlamaForCausalLM")
             base_model_name = custom_config["language_model"]["name"]
-        
             config=TracConfig(custom_config)
             model = TracLlavaForCausalLM(config,tokenizer=tokenizer)
-            model.adjust_embeddings_from_num_new_tokens(len(new_tokens))
             return tokenizer, model
         else:
             print("Loading pretrained model from:", pretrained_path)
@@ -37,13 +32,11 @@ def load_model(config, pretrained_path=None, lora=False):
                 from peft import PeftModel
                 base_model = TracLlavaForCausalLM(config=config,tokenizer=tokenizer)
                 model = PeftModel.from_pretrained(base_model, pretrained_path)
-
                 return tokenizer, model
         
             else:
                 print("Loading full model weights")
                 model = TracLlavaForCausalLM.from_pretrained(pretrained_path, config=config)
-                model.adjust_embeddings_from_num_new_tokens(len(new_tokens))
             return tokenizer, model
 if __name__ == "__main__":
     import os
