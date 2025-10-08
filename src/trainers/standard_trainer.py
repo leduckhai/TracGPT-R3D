@@ -155,8 +155,22 @@ class StandardTrainer(Trainer):
             
         return metrics
     
-    def save_model(self, output_dir=None):
-        super().save_model(output_dir)
-        projector_path = os.path.join(output_dir, "mm_projector.pth")
-        
-        
+    def save_model(self, output_dir=None,**kwargs):
+        # super().save_model(output_dir, **kwargs)
+        # projector_path = os.path.join(output_dir, "projector.pth")
+        # self.model.save_projector_weight(projector_path)    
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 1. Save LoRA adapter (inside self.model)
+        lora_path = os.path.join(output_dir, "lora")
+        self.model.lm_model.save_pretrained(lora_path)
+
+        # 2. Save projector
+        projector_path = os.path.join(output_dir, "projector.pth")
+        torch.save(self.mm_projector.state_dict(), projector_path)
+
+        # (optional) Save config/tokenizer
+        self.config.save_pretrained(output_dir)
+        if self.tokenizer is not None:
+            self.tokenizer.save_pretrained(output_dir)
+            

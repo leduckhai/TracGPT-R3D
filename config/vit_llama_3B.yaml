@@ -14,12 +14,12 @@ data:
   dataset_config: 
     only_2d: True
 
-  train_sample: 5
-  val_sample: 3
-  test_sample: 5
-  # train_sample: -1
-  # val_sample: 50
-  # test_sample: -1
+  # train_sample: 5
+  # val_sample: 10
+  # test_sample: 10
+  train_sample: -1
+  val_sample: 50
+  test_sample: -1
 
   # train_sample: -1
   # train_sample: 20

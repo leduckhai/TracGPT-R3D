@@ -7,41 +7,95 @@ sys.path.append(os.getenv("ROOT", "/root/TracGPT-R3D"))
 from src.model.load_model import load_model
 
 
-def inference(model,tokenizer, dataloader,output_dir,num_beams=1, max_new_tokens=128, log_text_steps=5):
+def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tokens=128, 
+              do_sample=True, temperature=0.7, top_p=0.9, log_text_steps=5):
+    """
+    Fixed inference function with proper generation parameters
+    """
     inference_file = os.path.join(output_dir, "inference_results.json")
     model.eval()
-    tokenizer = tokenizer
+    
+    # FIX: Set tokenizer to consistent state
+    tokenizer.padding_side = "left"
+    tokenizer.truncation_side = "left"
+    
     preds = []
-    refs = [] 
-    for i, inputs in enumerate(tqdm(dataloader, desc="Generating")):
-        batch = {k: v.to(model.device) for k, v in inputs.items() 
-                if isinstance(v, torch.Tensor)}
-        
-        class_labels = inputs.get("class_labels", [])
-        refs.extend(class_labels)  
-        generated_ids = model.generate(
-            images=batch["images"],
-            input_ids=batch["input_ids"],   
-            attention_mask=batch["attention_mask"],
-            pad_token_id=tokenizer.eos_token_id,  
-                eos_token_id=tokenizer.eos_token_id,  
-        )
-        
-        batch_preds = tokenizer.batch_decode(
-            generated_ids, 
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True  
-        )
-        for pred in batch_preds:
-            print("pred", pred)
-            preds.append(pred)   
+    refs = []
+    raw_preds = []
+    
+    print(f"Starting inference with parameters:")
+    print(f"  - num_beams: {num_beams}")
+    print(f"  - max_new_tokens: {max_new_tokens}")
+    print(f"  - do_sample: {do_sample}")
+    print(f"  - temperature: {temperature}")
+    print(f"  - top_p: {top_p}")
+    
+    with torch.inference_mode():
+        for i, inputs in enumerate(tqdm(dataloader, desc="Generating")):
+            # FIX: Proper device handling
+            batch = {}
+            for k, v in inputs.items():
+                if isinstance(v, torch.Tensor):
+                    batch[k] = v.to(model.device)
+                else:
+                    batch[k] = v
+            
+            class_labels = inputs.get("class_labels", [])
+            refs.extend(class_labels)
+            
+            # FIX: Use proper generation parameters matching training
+            generated_ids = model.generate(
+                images=batch["images"],
+                input_ids=batch["input_ids"],   
+                attention_mask=batch["attention_mask"],
+                max_new_tokens=max_new_tokens,
+                num_beams=num_beams,
+                do_sample=do_sample,
+                temperature=temperature,
+                top_p=top_p,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                early_stopping=True,
+                repetition_penalty=1.1,
+                length_penalty=1.0
+            )
+            
+            # FIX: Better text decoding
+            batch_preds = tokenizer.batch_decode(
+                generated_ids, 
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True  
+            )
+            
+            # FIX: Store both raw and processed predictions
+            for j, pred in enumerate(batch_preds):
+                # Remove input prompt from generated text
+                input_text = tokenizer.decode(batch["input_ids"][j], skip_special_tokens=True)
+                if pred.startswith(input_text):
+                    pred = pred[len(input_text):].strip()
+                
+                print(f"Sample {i*len(batch_preds)+j}: {pred}")
+                preds.append(pred)
+                raw_preds.append(batch_preds[j])  # Keep original for debugging
+                
+    # FIX: Save comprehensive results
+    results = {
+        "predictions": preds,
+        "raw_predictions": raw_preds,
+        "references": refs,
+        "generation_params": {
+            "num_beams": num_beams,
+            "max_new_tokens": max_new_tokens,
+            "do_sample": do_sample,
+            "temperature": temperature,
+            "top_p": top_p
+        }
+    }
+    
     with open(inference_file, "w") as f:
-        json.dump({
-            "predictions": preds,
-            "references": refs
-        }, f, indent=4)
-    print("Inference results saved to", inference_file)
-    return 
+        json.dump(results, f, indent=4)
+    print(f"Inference results saved to {inference_file}")
+    return results 
 
 if __name__ == "__main__":
     from src.collators.standard_collator import StandardCollator
@@ -55,7 +109,7 @@ if __name__ == "__main__":
     data_config=config["data"]
     device="cuda"
     model_config = config["model"]
-    pretrain_path="output/ux7px8hw/checkpoint-2706"
+    pretrain_path="output/hd4nazs3/checkpoint-2706"
     tokenizer,model=load_model(model_config,pretrain_path,lora=True)
     train_set, val_set, test_set= load_data(
         train_val_dir=data_config["train_val_dir"],
@@ -103,6 +157,14 @@ if __name__ == "__main__":
     os.makedirs(val_eval_output_dir,exist_ok=True)
     os.makedirs(test_eval_output_dir,exist_ok=True)
     print("Starting inference on train set")
-    train_metrics=inference(model,tokenizer,train_loader,train_eval_output_dir)
-    print("starting inference on test set")
-    test_metrics=inference(model,tokenizer,test_loader,test_eval_output_dir)
+    train_metrics = inference(
+        model, tokenizer, train_loader, train_eval_output_dir,
+        num_beams=4, max_new_tokens=128, do_sample=True, 
+        temperature=0.7, top_p=0.9
+    )
+    print("Starting inference on test set")
+    test_metrics = inference(
+        model, tokenizer, test_loader, test_eval_output_dir,
+        num_beams=4, max_new_tokens=128, do_sample=True, 
+        temperature=0.7, top_p=0.9
+    )

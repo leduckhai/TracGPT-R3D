@@ -42,158 +42,6 @@ class TracConfig(PretrainedConfig):
         self.custom_config = config if config is not None else {}
         super().__init__(**kwargs)
 
-
-class LlavaImageProcessor:
-    def __init__(self, model, config, tokenizer=None, freeze_vision_encoder=True):
-        print("initializing image processor")
-        self.model = model
-        self.config = config
-        self.tokenizer = tokenizer
-        self.device = "cuda"
-        self.image_token_name = "<image>"
-        self.IGNORE_INDEX = -100
-        self.IMAGE_TOKEN_ID = self.tokenizer.convert_tokens_to_ids(
-            self.image_token_name
-        )
-
-        print("image token id", self.IMAGE_TOKEN_ID)
-        self.freeze_vision_encoder = freeze_vision_encoder
-
-        self.vision_encoder = load_vision_encoder(config["vision_encoder"])
-        self.mm_projector = load_mm_projector(config["projector"])
-
-        self.vision_encoder.to(self.device)
-        self.mm_projector.to(self.device)
-
-        if config.get("freeze_vision_encoder", True):
-            for param in self.vision_encoder.parameters():
-                param.requires_grad = False
-
-    def encode_single_image(self, image):
-        """Encode a single image with safety checks"""
-        image = image.to(self.device)
-
-        if self.freeze_vision_encoder:
-            with torch.no_grad():
-                image_features = self.vision_encoder(image)
-        else:
-            image_features = self.vision_encoder(image)
-        # print("stats image features",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
-        image_features = self.mm_projector(image_features)
-        print("image feature after projector shape", image_features.shape)
-        # print("stats image features after projector",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
-
-        return image_features
-   
-                   
-    def embed_tokens(self, input_ids):
-        return self.model.model.embed_tokens(input_ids)
-
-    def prepare_input(
-        self,
-        input_ids,
-        images,
-        labels=None,
-        attention_mask=None,
-        position_ids=None,
-        past_key_values=None,
-    ):
-
-        B, T = input_ids.shape
-        if images is None:
-            print("images is None, use text only")
-            text_embeds = self.embed_tokens(input_ids)
-            position_ids = torch.arange(
-                0, T, dtype=torch.long, device=input_ids.device
-            ).repeat(B, 1)
-            return text_embeds, labels, attention_mask, position_ids
-        image_features = self.encode_single_image(images)
-
-        if image_features.dim() == 2:  # [B, D]
-            image_features = image_features.unsqueeze(1)  # [B, 1, D]
-            Vi = 1
-        else:
-            Vi = image_features.shape[1]  # [B, Vi, D]
-
-        D = image_features.shape[2]
-
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        else:
-            attention_mask = attention_mask.bool()
-
-        if labels is None:
-            labels = torch.full_like(input_ids, self.IGNORE_INDEX)
-
-        text_embeds = self.embed_tokens(input_ids)
-        image_token_id_tensor = torch.tensor(
-            self.IMAGE_TOKEN_ID, device=input_ids.device, dtype=input_ids.dtype
-        )
-        is_image_token = input_ids == image_token_id_tensor  # [B, T]
-
-        num_image_tokens = is_image_token.sum(dim=1)  # [B]
-        expanded_lengths = (T - num_image_tokens) + num_image_tokens * Vi
-        L = expanded_lengths.max().item()
-
-        input_embeds = torch.zeros(
-            (B, L, D), device=input_ids.device, dtype=text_embeds.dtype
-        )
-        new_labels = torch.full(
-            (B, L), self.IGNORE_INDEX, device=input_ids.device, dtype=labels.dtype
-        )
-        new_attention_mask = torch.zeros(
-            (B, L), device=input_ids.device, dtype=torch.bool
-        )
-        new_position_ids = torch.zeros(
-            (B, L), device=input_ids.device, dtype=torch.long
-        )
-
-        for b in range(B):
-            seq_embeds = []
-            seq_labels = []
-            seq_masks = []
-            pos_counter = 0
-
-            for t in range(T):
-                if is_image_token[b, t]:
-                    seq_embeds.append(image_features[b])  
-                    seq_labels.append(
-                        torch.full(
-                            (Vi,),
-                            self.IGNORE_INDEX,
-                            device=labels.device,
-                            dtype=labels.dtype,
-                        )
-                    )
-                    seq_masks.append(
-                        torch.ones(Vi, dtype=torch.bool, device=input_ids.device)
-                    )
-                    pos_counter += Vi
-                else:
-                    if attention_mask[b, t]:
-                        seq_embeds.append(text_embeds[b, t].unsqueeze(0))
-                        seq_labels.append(labels[b, t].unsqueeze(0))
-                        seq_masks.append(
-                            torch.ones(1, dtype=torch.bool, device=input_ids.device)
-                        )
-                        pos_counter += 1
-
-            if seq_embeds:
-                seq_embeds = torch.cat(seq_embeds, dim=0)
-                seq_labels = torch.cat(seq_labels, dim=0)
-                seq_masks = torch.cat(seq_masks, dim=0)
-
-                current_length = seq_embeds.size(0)
-                input_embeds[b, :current_length] = seq_embeds
-                new_labels[b, :current_length] = seq_labels
-                new_attention_mask[b, :current_length] = seq_masks
-                new_position_ids[b, :current_length] = torch.arange(
-                    current_length, device=input_ids.device
-                )
-      
-        return input_embeds, new_labels, new_attention_mask, new_position_ids
-
-
 class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
     config_class = TracConfig
 
@@ -203,78 +51,45 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
         cfg = config.custom_config
         base_model_name = cfg["language_model"]["name"]
         print("Loading trac base model:", base_model_name)
-        self.model = LlamaForCausalLM.from_pretrained(
+        self.lm_model = LlamaForCausalLM.from_pretrained(
             base_model_name,
             torch_dtype=torch.float16,
         )
+        # print("self.lm_model",self.lm_model)
+        print(type(self.lm_model))
         self.tokenizer = tokenizer
-        print("Len model before vocab", self.model.config.vocab_size)
-        self.model.resize_token_embeddings(len(tokenizer))
-        print("Len model after vocab", self.model.config.vocab_size)
-        # self.image_processor = LlavaImageProcessor(self.model, cfg, tokenizer)
-    
-        self.vision_encoder = load_vision_encoder(config["vision_encoder"])
-        self.mm_projector = load_mm_projector(config["projector"])
-
+        self.lm_model.resize_token_embeddings(len(tokenizer))
+        self.vision_encoder = load_vision_encoder(cfg["vision_encoder"])
+        self.mm_projector = load_mm_projector(cfg["projector"])
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.vision_encoder.to(device)  
         self.mm_projector.to(device)
-
-        if config.get("freeze_vision_encoder", True):
+        self.freeze_vision_encoder = True
+        if self.freeze_vision_encoder:
             for param in self.vision_encoder.parameters():
                 param.requires_grad = False
                 
     def freeze_llm(self):
-        for name, p in self.model.named_parameters():
+        for name, p in self.lm_model.named_parameters():
             if "lora" in name.lower():
                 print("Freezing", name)
                 p.requires_grad = False
     def unfreeze_llm(self):
-        for name, p in self.model.named_parameters():
+        for name, p in self.lm.named_parameters():
             if "lora" in name.lower():
                 print("Unfreezing", name)
                 p.requires_grad = True
     def adjust_embeddings_from_num_new_tokens(self, num_new_tokens):
+
         with torch.no_grad():
-            old_embeddings = self.model.get_input_embeddings().weight.data
+            old_embeddings = self.lm_model.get_input_embeddings().weight.data
             old_embeddings_avg = old_embeddings[:-num_new_tokens, :].mean(dim=0)
-            new_embeddings = self.model.get_input_embeddings().weight.data
+            new_embeddings = self.lm_model.get_input_embeddings().weight.data
             new_embeddings[-num_new_tokens:, :] = old_embeddings_avg
 
-    def get_input_embeddings(self):
-        if hasattr(self.model, "get_input_embeddings"):
-            return self.model.get_input_embeddings()
-        elif hasattr(self.model, "embed_tokens"):
-            return self.model.embed_tokens
-        elif hasattr(self.model, "model") and hasattr(self.model.model, "embed_tokens"):
-            return self.model.model.embed_tokens
-        else:
-            raise NotImplementedError("Input embeddings not found")
-
-    def get_output_embeddings(self):
-        if hasattr(self.model, "get_output_embeddings"):
-            return self.model.get_output_embeddings()
-        elif hasattr(self.model, "lm_head"):
-            return self.model.lm_head
-        else:
-            return None
+    def embed_tokens(self, input_ids):
+        return self.lm_model.model.embed_tokens(input_ids)
         
-    def encode_single_image(self, image):
-        """Encode a single image with safety checks"""
-        image = image.to(self.device)
-
-        if self.freeze_vision_encoder:
-            with torch.no_grad():
-                image_features = self.vision_encoder(image)
-        else:
-            image_features = self.vision_encoder(image)
-        # print("stats image features",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
-        image_features = self.mm_projector(image_features)
-        print("image feature after projector shape", image_features.shape)
-        # print("stats image features after projector",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
-
-        return image_features
-
     def forward(
         self,
         input_ids,
@@ -303,7 +118,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
                 )
             )
 
-        transformer_outputs = self.model(
+        transformer_outputs = self.lm_model(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -348,7 +163,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
                 )
             )
 
-            outputs = self.model.generate(
+            outputs = self.lm_model.generate(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -360,7 +175,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
                 **kwargs
             )
         else:
-            outputs = self.model.generate(
+            outputs = self.lm_model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 max_new_tokens=max_new_tokens,
@@ -461,7 +276,7 @@ if __name__ == "__main__":
         print(f"{file_path} deleted.")
     else:
         print(f"{file_path} does not exist.")
-    print("model", model.mm_projector)
+    print("projector", model.mm_projector)
     for i,batch in enumerate(train_loader):
         with torch.no_grad():
             print("train loader mode")
@@ -481,8 +296,9 @@ if __name__ == "__main__":
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                # images=images
+                images=images
             )
+            print("output", output)
             generate_ids = model.generate(
             input_ids=input_ids,
             images=images,

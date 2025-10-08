@@ -20,7 +20,7 @@ from src.trainers.load_trainer import load_trainer
 from src.model.load_model import load_model
 from types import SimpleNamespace
 from dataclasses import dataclass, asdict
-from inference import infer_test_data
+# from inference import infer_test_data
 
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
@@ -60,7 +60,6 @@ class DataConfig:
     test_sample: int = -1
     dataloader_pin_memory: bool = True
 
-
 @dataclass
 class ModelConfig:
     vision_backbone: str = "resnet50"
@@ -87,22 +86,17 @@ def parse_cli_args():
 
 def load_configs():
     now = datetime.now()
-
     cli_args = parse_cli_args()
     config_path = cli_args.config_path
     with open(config_path) as f:
         yaml_config = yaml.safe_load(f)
-
     data_config = DataConfig(**yaml_config["data"])
-
     model_config = ModelConfig(**yaml_config["model"])
     general_config = GeneralConfig(**yaml_config["general"])
-
     train_config = yaml_config["training"]
     train_config["logging_dir"] = os.path.join(train_config["output_dir"], "logs")
     train_config["learning_rate"] = float(train_config["learning_rate"])
     training_config = TrainingArguments(**train_config)
-
     return training_config, model_config, data_config, general_config
 
 def set_up_lora(model, lora_r, lora_alpha, lora_dropout, lora_target_modules, lora_bias):
@@ -121,12 +115,9 @@ def set_up_lora(model, lora_r, lora_alpha, lora_dropout, lora_target_modules, lo
         task_type=TaskType.CAUSAL_LM,
         # modules_to_save=["embed_tokens", "lm_head"]
     )
-
-    model = get_peft_model(model, lora_config)
-
-    trainable_params, all_params = model.get_nb_trainable_parameters()
+    model = get_peft_model(model.lm_model, lora_config)
+    trainable_params, all_params = model.lm_model.get_nb_trainable_parameters()
     print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
-
     return model
 
 def save_configs(output_dir: str, training_config, model_config, data_config, cli_args):
@@ -159,7 +150,6 @@ def main():
     save_configs(
         training_config.output_dir, training_config, model_config, data_config, cli_args
     )
-
     torch.manual_seed(training_config.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(training_config.seed)
@@ -178,7 +168,6 @@ def main():
     print("train set", len(train_set))
     print("val set", len(val_set))
     print("test set", len(test_set))
-
     if not is_test:
         run_id=None
         if training_config.report_to[0] == "wandb":
@@ -199,6 +188,7 @@ def main():
             collator_name=general_config.collator,
             tokenizer=tokenizer,
         )
+        print("before",print_trainable_params(model))
         if general_config.lora:
             model = set_up_lora(
                 model=model,
@@ -243,11 +233,8 @@ def main():
         )
         print_trainable_params(model)
         trainer.train()
-
         trainer.inference(eval_dataset=test_set )
-    
         tracker.on_train_end()
-
         print_info(f"Model saved to {training_config.output_dir}")
 
     else:
@@ -277,7 +264,7 @@ def main():
         )
         print_info("Test dataloader created")
         
-        test_results = infer_test_data(model=model,tokenizer=tokenizer, dataloader=test_dataloader, output_dir=output_path)
+        # test_results = infer_test_data(model=model,tokenizer=tokenizer, dataloader=test_dataloader, output_dir=output_path)
  
 
 if __name__ == "__main__":

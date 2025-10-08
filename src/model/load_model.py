@@ -25,18 +25,27 @@ def load_model(config, pretrained_path=None, lora=False):
             return tokenizer, model
         else:
             print("Loading pretrained model from:", pretrained_path)
-            custom_config = config["config"]
-            config=TracConfig(custom_config)
+            # custom_config = config["config"]
+            # config=TracConfig(custom_config)
+            config=TracConfig.from_pretrained(pretrained_path)
             if lora:
                 print("Loading LoRA weights")
                 from peft import PeftModel
-                base_model = TracLlavaForCausalLM(config=config,tokenizer=tokenizer)
-                model = PeftModel.from_pretrained(base_model, pretrained_path)
+                model = TracLlavaForCausalLM(config=config,tokenizer=tokenizer)
+                projector_path = pretrained_path + "/projector.pth"
+                lora_path= pretrained_path + "/lora"
+                # base_model.load_projector_weight(projector_path)
+                if os.path.exists(projector_path):
+                    model.load_projector_weight(projector_path)
+                    print(f"Loaded projector weights from {projector_path}")
+                model.model = PeftModel.from_pretrained(model.lm_model, lora_path)
                 return tokenizer, model
         
             else:
                 print("Loading full model weights")
                 model = TracLlavaForCausalLM.from_pretrained(pretrained_path, config=config)
+                model.load_projector_weight(projector_path)
+
             return tokenizer, model
 if __name__ == "__main__":
     import os

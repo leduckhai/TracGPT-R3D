@@ -2,12 +2,9 @@ import torch
 import torch.nn as nn   
 
 class BaseModel:
-    def __init__(self,  tokenizer=None, freeze_vision_encoder=True):
+    def __init__(self,  tokenizer=None):
         print("initializing image processor")
-        # self.model = model
-        # self.config = config
         self.tokenizer = tokenizer
-        # self.device = "cuda"
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self.image_token_name = "<image>"
         self.IGNORE_INDEX = -100
@@ -25,10 +22,17 @@ class BaseModel:
             image_features = self.vision_encoder(image)
         # print("stats image features",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
         image_features = self.mm_projector(image_features)
-        print("image feature after projector shape", image_features.shape)
-        # print("stats image features after projector",image_features.mean(), image_features.std(), image_features.min(), image_features.max())
-
+        # print("image feature after projector shape", image_features.shape)
         return image_features
+    
+    def load_projector_weight(self, path):
+        state_dict = torch.load(path, map_location=self._device)
+        self.mm_projector.load_state_dict(state_dict)
+        print(f"Loaded projector weights from {path}")
+  
+    def save_projector_weight(self, path):
+        torch.save(self.mm_projector.state_dict(), path)
+        print(f"Saved projector weights to {path}")
 
     def prepare_input(
         self,
