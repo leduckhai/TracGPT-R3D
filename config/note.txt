@@ -1,0 +1,9 @@
+ # below is S_change for -1 (full)
+  train_val_dir: pseudo_3d/-1_all_slices/7c75e990-60b0-44d4-82f4-45ec2513e97e/train/data
+  test_dir: pseudo_3d/-1_all_slices/7c75e990-60b0-44d4-82f4-45ec2513e97e/test/data
+  
+
+
+  32 slice"
+
+  pseudo_3d/32_all_slices/7cc980de-e632-4f11-9805-65acc291fcb7

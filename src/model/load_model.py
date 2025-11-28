@@ -2,7 +2,11 @@ import sys
 sys.path.append("/root/TracGPT-R3D")
 import torch
 from transformers import AutoTokenizer
-from src.model.llava_origin_v2 import TracLlavaForCausalLM,TracConfig
+import os
+from model.trac_llava import TracLlavaForCausalLM,TracConfig
+from safetensors.torch import load_file
+from peft import LoraConfig, get_peft_model, PeftModel
+from transformers import AutoModelForCausalLM
 def load_model(config, pretrained_path=None, lora=False):
     base_model_name=config["config"]["language_model"]["name"]
     print("base_model_name",base_model_name)
@@ -25,20 +29,30 @@ def load_model(config, pretrained_path=None, lora=False):
             return tokenizer, model
         else:
             print("Loading pretrained model from:", pretrained_path)
-            # custom_config = config["config"]
-            # config=TracConfig(custom_config)
+            tokenizer = AutoTokenizer.from_pretrained(pretrained_path)
             config=TracConfig.from_pretrained(pretrained_path)
             if lora:
                 print("Loading LoRA weights")
+                
                 from peft import PeftModel
                 model = TracLlavaForCausalLM(config=config,tokenizer=tokenizer)
                 projector_path = pretrained_path + "/projector.pth"
                 lora_path= pretrained_path + "/lora"
-                # base_model.load_projector_weight(projector_path)
+               
+                # base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-3B")
+                # diff = (model.lm_model.model.layers[0].self_attn.q_proj.weight - 
+                #         base_model.model.layers[0].self_attn.q_proj.weight).abs().sum()
+                # print("Sum of changes Before merge dif:", diff.item())
+                model.lm_model = PeftModel.from_pretrained(model.lm_model, lora_path)
+                model.lm_model = model.lm_model.merge_and_unload()
                 if os.path.exists(projector_path):
                     model.load_projector_weight(projector_path)
                     print(f"Loaded projector weights from {projector_path}")
-                model.model = PeftModel.from_pretrained(model.lm_model, lora_path)
+                # merged_model = model.lm_model
+
+                # diff = (merged_model.model.layers[0].self_attn.q_proj.weight - 
+                #         base_model.model.layers[0].self_attn.q_proj.weight).abs().sum()
+                # print("Sum of changes:", diff.item())
                 return tokenizer, model
         
             else:
@@ -56,7 +70,7 @@ if __name__ == "__main__":
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     model_config= config["model"]
-    pretrain_path="output/6xtl6uw0/checkpoint-483"
+    pretrain_path="output/qs2tahbf/checkpoint-4"
     assert os.path.exists(pretrain_path), f"Pretrained path {pretrain_path} does not exist."
 
     tokenizer, model = load_model(model_config, pretrained_path=pretrain_path, lora=True)

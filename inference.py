@@ -15,10 +15,6 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
     inference_file = os.path.join(output_dir, "inference_results.json")
     model.eval()
     
-    # FIX: Set tokenizer to consistent state
-    tokenizer.padding_side = "left"
-    tokenizer.truncation_side = "left"
-    
     preds = []
     refs = []
     raw_preds = []
@@ -32,7 +28,6 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
     
     with torch.inference_mode():
         for i, inputs in enumerate(tqdm(dataloader, desc="Generating")):
-            # FIX: Proper device handling
             batch = {}
             for k, v in inputs.items():
                 if isinstance(v, torch.Tensor):
@@ -42,34 +37,31 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
             
             class_labels = inputs.get("class_labels", [])
             refs.extend(class_labels)
-            
-            # FIX: Use proper generation parameters matching training
+            for i in range(len(batch["input_ids"])):
+                print("Input:", tokenizer.decode(batch["input_ids"][i], skip_special_tokens=False))
             generated_ids = model.generate(
                 images=batch["images"],
                 input_ids=batch["input_ids"],   
                 attention_mask=batch["attention_mask"],
                 max_new_tokens=max_new_tokens,
-                num_beams=num_beams,
-                do_sample=do_sample,
-                temperature=temperature,
-                top_p=top_p,
+                # num_beams=num_beams,
+                # do_sample=do_sample,
+                # temperature=temperature,
+                # top_p=top_p,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
-                early_stopping=True,
-                repetition_penalty=1.1,
-                length_penalty=1.0
+                # early_stopping=True,
+                # repetition_penalty=1.1,
+                # length_penalty=1.0
             )
             
-            # FIX: Better text decoding
             batch_preds = tokenizer.batch_decode(
                 generated_ids, 
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True  
             )
             
-            # FIX: Store both raw and processed predictions
             for j, pred in enumerate(batch_preds):
-                # Remove input prompt from generated text
                 input_text = tokenizer.decode(batch["input_ids"][j], skip_special_tokens=True)
                 if pred.startswith(input_text):
                     pred = pred[len(input_text):].strip()
@@ -102,15 +94,24 @@ if __name__ == "__main__":
     from src.dataset.dataloader import load_data
     import yaml
     import shutil   
-    from torch.nn.functional import softmax
     config_path="config/vit_llama_3B.yaml"
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config=config["data"]
     device="cuda"
     model_config = config["model"]
-    pretrain_path="output/hd4nazs3/checkpoint-2706"
+    # pretrain_path="output/r8qyf5em/checkpoint-678"
+    # pretrain_path="output/626yvz3p/checkpoint-120"
+    pretrain_path="output/626yvz3p/checkpoint-678"
+    tag=pretrain_path.split("/")[1]
     tokenizer,model=load_model(model_config,pretrain_path,lora=True)
+    print("eos_token_id",tokenizer.eos_token_id)
+    print("pad_token_id",tokenizer.pad_token_id)
+    decoded = tokenizer.decode([tokenizer.pad_token_id], skip_special_tokens=False)
+    print("decoded:", decoded)
+    print(tokenizer.decode([tokenizer.eos_token_id], skip_special_tokens=False))
+
+    model.to(device)
     train_set, val_set, test_set= load_data(
         train_val_dir=data_config["train_val_dir"],
         test_dir=data_config["test_dir"],
@@ -142,11 +143,11 @@ if __name__ == "__main__":
         shuffle=False,
         collate_fn=collator
     )   
-    # inference_file =  "inference_results.json"
-    model.to(device)
-    train_eval_output_dir="full_eval/ux7px8hw_train"
-    val_eval_output_dir="full_eval/ux7px8hw_val"
-    test_eval_output_dir="full_eval/ux7px8hw_test"
+    
+
+    train_eval_output_dir=f"full_eval/{tag}_train"
+    val_eval_output_dir=f"full_eval/{tag}_val"
+    test_eval_output_dir=f"full_eval/{tag}_test"
     if os.path.exists(train_eval_output_dir):
         shutil.rmtree(train_eval_output_dir)  
     if os.path.exists(val_eval_output_dir):
@@ -159,12 +160,10 @@ if __name__ == "__main__":
     print("Starting inference on train set")
     train_metrics = inference(
         model, tokenizer, train_loader, train_eval_output_dir,
-        num_beams=4, max_new_tokens=128, do_sample=True, 
-        temperature=0.7, top_p=0.9
+        
     )
     print("Starting inference on test set")
-    test_metrics = inference(
-        model, tokenizer, test_loader, test_eval_output_dir,
-        num_beams=4, max_new_tokens=128, do_sample=True, 
-        temperature=0.7, top_p=0.9
-    )
+    # test_metrics = inference(
+    #     model, tokenizer, test_loader, test_eval_output_dir,
+       
+    # )

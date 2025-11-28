@@ -21,6 +21,7 @@ from src.model.load_model import load_model
 from types import SimpleNamespace
 from dataclasses import dataclass, asdict
 # from inference import infer_test_data
+from transformers import EarlyStoppingCallback
 
 os.environ["RANK"] = "-1"
 os.environ["LOCAL_RANK"] = "-1"
@@ -115,9 +116,9 @@ def set_up_lora(model, lora_r, lora_alpha, lora_dropout, lora_target_modules, lo
         task_type=TaskType.CAUSAL_LM,
         # modules_to_save=["embed_tokens", "lm_head"]
     )
-    model = get_peft_model(model.lm_model, lora_config)
-    trainable_params, all_params = model.lm_model.get_nb_trainable_parameters()
-    print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
+    model.lm_model = get_peft_model(model.lm_model, lora_config)
+    # trainable_params, all_params = model.lm_model.get_nb_trainable_parameters()
+    # print(f"Trainable params: {trainable_params:,} || All params: {all_params:,} || Trainable%: {100 * trainable_params / all_params:.4f}%")
     return model
 
 def save_configs(output_dir: str, training_config, model_config, data_config, cli_args):
@@ -132,6 +133,32 @@ def save_configs(output_dir: str, training_config, model_config, data_config, cl
     with open(f"{output_dir}/config.json", "w") as f:
         json.dump(config, f, indent=2)
 
+
+# def find_largest_batch_size(model_init, args, dataset, tokenizer, max_batch_size=128):
+#     batch_size = 1
+#     best_batch_size = batch_size
+#     oom = False
+
+#     while batch_size <= max_batch_size and not oom:
+#         try:
+#             print(f"Trying batch size = {batch_size}")
+#             args.per_device_train_batch_size = batch_size
+#             trainer = Trainer(
+#                 model_init=model_init,
+#                 args=args,
+#                 train_dataset=dataset,
+#                 tokenizer=tokenizer,
+#             )
+#             trainer.train(max_steps=1)  # Just a quick test step
+#             best_batch_size = batch_size
+#             batch_size *= 2
+#         except torch.cuda.OutOfMemoryError:
+#             print(f"OOM at batch size = {batch_size}")
+#             torch.cuda.empty_cache()
+#             oom = True
+
+#     print(f"✅ Best batch size: {best_batch_size}")
+#     return best_batch_size
 
 def main():
 
@@ -188,7 +215,6 @@ def main():
             collator_name=general_config.collator,
             tokenizer=tokenizer,
         )
-        print("before",print_trainable_params(model))
         if general_config.lora:
             model = set_up_lora(
                 model=model,
@@ -198,26 +224,25 @@ def main():
                 lora_target_modules=general_config.lora_target_modules,
                 lora_bias=general_config.lora_bias
             )
-        if training_config.gradient_checkpointing:
-            model.gradient_checkpointing_enable()
+       
         model.to("cuda")
         
-        if general_config.max_eval != -1:
-            batch_size = training_config.per_device_train_batch_size * max(
-                1, training_config.n_gpu
-            )
-            train_dataset_size = len(train_set)
-            gradient_accumulation_steps = training_config.gradient_accumulation_steps or 1
+        # if general_config.max_eval != -1:
+        #     batch_size = training_config.per_device_train_batch_size * max(
+        #         1, training_config.n_gpu
+        #     )
+        #     train_dataset_size = len(train_set)
+        #     gradient_accumulation_steps = training_config.gradient_accumulation_steps or 1
 
-            steps_per_epoch = train_dataset_size // (
-                batch_size * gradient_accumulation_steps
-            )
+        #     steps_per_epoch = train_dataset_size // (
+        #         batch_size * gradient_accumulation_steps
+        #     )
 
-            eval_steps = max(1, steps_per_epoch // general_config.max_eval)
+        #     eval_steps = max(1, steps_per_epoch // general_config.max_eval)
 
-            print("EVAL STEP", eval_steps)
-            training_config.eval_steps = eval_steps
-            training_config.save_steps = eval_steps
+        #     print("EVAL STEP", eval_steps)
+        #     training_config.eval_steps = eval_steps
+        #     training_config.save_steps = eval_steps
             
         # model.freeze_llm()
         custom_trainer = load_trainer(trainer_name=general_config.trainer)
@@ -230,6 +255,7 @@ def main():
             train_dataset=train_set,
             eval_dataset=val_set,
             data_collator=collator,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
         )
         print_trainable_params(model)
         trainer.train()

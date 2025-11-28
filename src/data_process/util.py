@@ -2,20 +2,17 @@
 import numpy as np
 import re
 import pickle 
-from sklearn.cluster import DBSCAN  # For spatial clustering
-
+import cv2
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import pdist
 import numpy as np
 import nibabel as nib
 from collections import defaultdict
-
+import ast
 def rgb_to_grayscale(img_rgb):
     """Convert (H, W, 3) RGB to (H, W) grayscale using standard weights."""
     return np.dot(img_rgb[..., :3], [0.2989, 0.5870, 0.1140]) 
-
-
 
 def group_files(file_list):
     """"
@@ -154,9 +151,143 @@ def save_nifti(array_3d, output_path, voxel_spacing=(1.0, 1.0, 1.0)):
     nib.save(nifti_img, output_path)
     print(f"NIfTI saved to: {output_path}")
 
+_BOX_EDGES = [
+    (0,1),(1,2),(2,3),(3,0),  # bottom rectangle (zmin)
+    (4,5),(5,6),(6,7),(7,4),  # top rectangle (zmax)
+    (0,4),(1,5),(2,6),(3,7)   # vertical edges
+]
 
+def bboxes_to_filled_volume(shape,bboxes, value=1, dtype=np.uint8):
+    """
+    Render normalized 3D bounding boxes as filled volumes into a 3D numpy array.
 
-def draw_3d_bbox_wireframe_v2(shape, bboxes, line_thickness=1):
+    Args:Pll
+        bboxes: list of (xmin, ymin, zmin, xmax, ymax, zmax) with values in [0, 1].
+                Coordinates use x->width (W), y->height (H), z->depth (D).
+        shape: (D, H, W) tuple for output volume.
+        value: voxel value to fill inside boxes (e.g., 1 or 255).
+        dtype: numpy dtype for output.
+
+    Returns:
+        vol: numpy array of shape (D, H, W) with filled boxes.
+    """
+    D, H, W = shape
+    vol = np.zeros(shape, dtype=dtype)
+
+    for bbox in bboxes:
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox
+        # clamp to [0,1]
+        xmin = np.clip(xmin, 0, 1)
+        ymin = np.clip(ymin, 0, 1)
+        zmin = np.clip(zmin, 0, 1)
+        xmax = np.clip(xmax, 0, 1)
+        ymax = np.clip(ymax, 0, 1)
+        zmax = np.clip(zmax, 0, 1)
+
+        # map normalized to voxel coordinates (inclusive ranges)
+        x0 = int(np.floor(xmin * (W - 1)))
+        x1 = int(np.ceil(xmax * (W - 1)))
+        y0 = int(np.floor(ymin * (H - 1)))
+        y1 = int(np.ceil(ymax * (H - 1)))
+        z0 = int(np.floor(zmin * (D - 1)))
+        z1 = int(np.ceil(zmax * (D - 1)))
+
+        # fill inside box
+        vol[z0:z1+1, y0:y1+1, x0:x1+1] = value
+
+    return vol
+def bboxes_to_wireframe_volume(shape,bboxes,  line_width=8, value=1, dtype=np.uint8, oversample=1):
+    """
+    Render normalized 3D bounding boxes as wireframes into a 3D volume.
+
+    Args:
+        bboxes: iterable of (xmin, ymin, zmin, xmax, ymax, zmax) with coords in [0,1].
+                Coordinates use x->width (W), y->height (H), z->depth (D).
+        shape: (D, H, W) integer tuple for the output volume.
+        line_width: integer >=1 controlling thickness in voxels.
+        value: voxel value to write on wireframe (e.g., 1 or 255).
+        dtype: numpy dtype for output volume.
+        oversample: integer >=1. Samples per voxel step along a line (higher -> smoother lines).
+    Returns:
+        vol: numpy array of shape (D, H, W) with wireframes drawn.
+    """
+    D, H, W = shape
+    vol = np.zeros(shape, dtype=dtype)
+
+    # precompute local offsets for thickness (sphere-like)
+    if line_width <= 1:
+        offsets = np.array([[0,0,0]], dtype=np.int32)
+    else:
+        radius = (line_width - 1) / 2.0
+        # bound box around kernel
+        r = int(np.ceil(radius + 0.5))
+        zz, yy, xx = np.meshgrid(np.arange(-r, r+1), np.arange(-r, r+1), np.arange(-r, r+1), indexing='ij')
+        dist = np.sqrt(xx**2 + yy**2 + zz**2)
+        mask = dist <= (radius + 0.5)  # include voxels whose center lies within radius+0.5
+        offsets = np.stack([zz[mask], yy[mask], xx[mask]], axis=1).astype(np.int32)  # (N,3) as (dz,dy,dx)
+
+    def normalized_to_voxel_coords(bbox):
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox
+        # Clip to [0,1]
+        xmin, ymin, zmin = max(0.0, xmin), max(0.0, ymin), max(0.0, zmin)
+        xmax, ymax, zmax = min(1.0, xmax), min(1.0, ymax), min(1.0, zmax)
+        # Map to voxel coordinates range [0, W-1], [0, H-1], [0, D-1]
+        x0 = xmin * (W - 1)
+        x1 = xmax * (W - 1)
+        y0 = ymin * (H - 1)
+        y1 = ymax * (H - 1)
+        z0 = zmin * (D - 1)
+        z1 = zmax * (D - 1)
+        # corners in (x,y,z) float
+        corners = np.array([
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+        ], dtype=float)
+        return corners
+
+    for bbox in bboxes:
+        corners = normalized_to_voxel_coords(bbox)  # (8,3) floats (x,y,z)
+        # draw each edge
+        for a, b in _BOX_EDGES:
+            p0 = corners[a]  # (x,y,z)
+            p1 = corners[b]
+            # length in voxels (euclidean)
+            diff = p1 - p0
+            length = np.linalg.norm(diff)
+            if length == 0:
+                # degenerate edge (zero-length box face?) just plot a single point
+                steps = 1
+            else:
+                # choose number of samples proportional to length and oversample factor
+                steps = max(1, int(np.ceil(length * oversample)))
+            # linear samples t in [0,1]
+            t = np.linspace(0.0, 1.0, steps)
+            xs = p0[0] + (p1[0] - p0[0]) * t
+            ys = p0[1] + (p1[1] - p0[1]) * t
+            zs = p0[2] + (p1[2] - p0[2]) * t
+            # round to nearest voxel indices
+            xi = np.rint(xs).astype(np.int32)
+            yi = np.rint(ys).astype(np.int32)
+            zi = np.rint(zs).astype(np.int32)
+            for x, y, z in zip(xi, yi, zi):
+                # apply thickness offsets
+                for dz, dy, dx in offsets:
+                    zz = z + int(dz)
+                    yy = y + int(dy)
+                    xx = x + int(dx)
+                    # check bounds (volume indexing is vol[z,y,x])
+                    if 0 <= zz < D and 0 <= yy < H and 0 <= xx < W:
+                        vol[zz, yy, xx] = value
+
+    return vol
+
+def draw_3d_bbox_wireframe_v2(shape, bboxes, line_thickness=3):
     """
     Create a 3D binary volume with wireframe bounding boxes.
 
@@ -411,19 +542,57 @@ def combine_to_3d_bbox(boxes_2d, slice_positions, img_width=None, img_height=Non
 
     return np.concatenate([bbox_3d_min, bbox_3d_max])  # [x_min, y_min, z_min, x_max, y_max, z_max]
 
+def draw_normalized_boxes(image: np.ndarray, bbox_list_str: str) -> np.ndarray:
+    image_copy = image.copy()
+    if(type(bbox_list_str) == str):
+        bboxes = ast.literal_eval(bbox_list_str)
+    else:
+        bboxes = bbox_list_str
+    H, W, _ = image.shape
+
+    for box in bboxes:
+        x_min, y_min, x_max, y_max = box
+        # Convert normalized coords to pixel values
+        x1 = int(x_min * W)
+        y1 = int(y_min * H)
+        x2 = int(x_max * W)
+        y2 = int(y_max * H)
+        
+        # Draw the rectangle
+        cv2.rectangle(image_copy, (x1, y1), (x2, y2), color=(0, 0, 255), thickness=2)
+
+    return image_copy
 
 def convert_list_slice_paths_to_3d(list_slice_paths):
     slice_stack = []
 
-    for slice_path in list_slice_paths:
+    for i,slice_path in enumerate(list_slice_paths):
         if slice_path.endswith(".pkl"):
             with open(slice_path, "rb") as f:
                 slice_data = pickle.load(f)
-
                 if slice_data.shape[-1] == 3:
                     slice_data = rgb_to_grayscale(slice_data)
 
                 slice_stack.append(slice_data)
+        else:
+            raise NotImplementedError(f"Unsupported file type: {slice_path}")
+
+    return np.stack(slice_stack, axis=0)
+
+def convert_list_slice_paths_with_bbox_to_3d(list_slice_paths, bbox_2d_lists):
+
+    slice_stack = []
+
+    for i,slice_path in enumerate(list_slice_paths):
+        if slice_path.endswith(".pkl"):
+            with open(slice_path, "rb") as f:
+                slice_data = pickle.load(f)
+                # slice_merge=slice_data
+                slice_merge=draw_normalized_boxes(slice_data, bbox_2d_lists[i])
+                if slice_merge.shape[-1] == 3:
+                    slice_merge = rgb_to_grayscale(slice_merge)
+                # print("slice_data shape", slice_merge.shape)
+                slice_stack.append(slice_merge)
         else:
             raise NotImplementedError(f"Unsupported file type: {slice_path}")
 

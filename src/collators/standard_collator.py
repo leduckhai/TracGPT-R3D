@@ -30,13 +30,14 @@ class StandardCollator:
         
     def __call__(self, batch):
         images, batch_input_ids, batch_attention_masks, batch_labels = [], [], [], []
-        full_texts, class_labels, p_ids,question_texts = [], [], [],[]
+        aux_labels,full_texts, class_labels, p_ids,question_texts = [],[], [], [],[]
 
         for sample in batch:
+            aux_label= sample.get("label_idx", -1)
+            aux_labels.append(aux_label)
             image = sample["image"]
             images.append(image)
             p_ids.append(sample.get("P_ID", ""))
-            idx=random.randrange(len(sample["Q4"]))
             question=sample["question"]
             answer = sample["answer"].strip()
             status = sample["A4"]
@@ -44,14 +45,17 @@ class StandardCollator:
             question_text = f"|Question|: {question}  {self.image_token}  "
             question_texts.append(question)
             full_text=question_text + self.answer_word_text 
-            question_token=self.tokenizer(
+            input=self.tokenizer(
                 question_text,
                 return_tensors="pt",
                 truncation=True,
                 padding=False,
                 add_special_tokens=False,
             )
-            if len(answer) and self.mode == "train":
+            input_ids=input.input_ids[0]
+            attention_mask=input.attention_mask[0]
+            q_len=len(input_ids)
+            if len(answer) :
                 answer += self.tokenizer.eos_token
                 full_text = full_text + " " + answer
                 answer_token=self.tokenizer(
@@ -61,23 +65,11 @@ class StandardCollator:
                     padding=False,
                     add_special_tokens=False,
                 )
-           
-                input_ids=torch.cat([question_token.input_ids[0],self.answer_word_token.input_ids[0],answer_token.input_ids[0]],dim=0)
-                attention_mask=torch.cat([question_token.attention_mask[0],self.answer_word_token.attention_mask[0],answer_token.attention_mask[0]],dim=0)
-            else:
-                input_ids=torch.cat([question_token.input_ids[0],self.answer_word_token.input_ids[0]],dim=0)
-                attention_mask=torch.cat([question_token.attention_mask[0],self.answer_word_token.attention_mask[0]],dim=0)
-            
-            full_texts.append(full_text)
-            
-            # answer_idx=torch.where(input_ids==self.answer_word_token[0])[0]
-            # if len(answer_idx)>0:
-            #     q_len=answer_idx[0]+1
-            q_len=len(question_token.input_ids[0])+len(self.answer_word_token.input_ids[0])  
-            labels = torch.full_like(input_ids, fill_value=self.IGNORE_INDEX)
-            # if len(labels) > q_len:
-            labels[q_len:] = input_ids[q_len:].clone()
-
+                input_ids=torch.cat([input_ids,answer_token.input_ids[0]],dim=0)
+                attention_mask=torch.cat([attention_mask,answer_token.attention_mask[0]],dim=0)
+        
+            labels=input_ids.clone()
+            labels[:q_len] = self.IGNORE_INDEX
             batch_input_ids.append(input_ids)
             batch_attention_masks.append(attention_mask)
             batch_labels.append(labels)
@@ -92,6 +84,7 @@ class StandardCollator:
             batch_labels, batch_first=True, padding_value=self.IGNORE_INDEX
         )
         images_tensor = torch.stack(images)  
+        aux_labels = torch.tensor(aux_labels)
         return {
             "input_ids": batch_input_ids,
             "attention_mask": batch_attention_masks,
@@ -101,6 +94,7 @@ class StandardCollator:
             "class_labels": class_labels,
             "question_texts": question_texts,   
             "p_ids": p_ids,
+            "aux_labels": aux_labels
         }
         
 if __name__ == "__main__":
@@ -141,10 +135,10 @@ if __name__ == "__main__":
         attention_mask = batch["attention_mask"]
         full_texts = batch["full_texts"]
         # status_criteria = batch["status_criteria"]
-        print("images shape", images.shape)
-        print("input_ids shape", input_ids.shape)
-        print("attention_mask shape", attention_mask.shape)
-        print("full_texts", full_texts)
+        # print("images shape", images.shape)
+        # print("input_ids shape", input_ids.shape)
+        # print("attention_mask shape", attention_mask.shape)
+        # print("full_texts", full_texts)
         # print("status_criteria", status_criteria)
     # for i, sample in enumerate(test_set):
     #     if i == 3:

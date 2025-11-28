@@ -11,6 +11,9 @@ class BaseModel:
         self.IMAGE_TOKEN_ID = self.tokenizer.convert_tokens_to_ids(
             self.image_token_name
         )
+    def embed_tokens(self, input_ids):
+        return self.lm_model.get_input_embeddings()(input_ids)
+    
     def encode_single_image(self, image):
         """Encode a single image with safety checks"""
         image = image.to(self._device)
@@ -26,8 +29,14 @@ class BaseModel:
         return image_features
     
     def load_projector_weight(self, path):
-        state_dict = torch.load(path, map_location=self._device)
+        state_dict = torch.load(path, map_location=self._device)        
+        before_load = {name: param.clone() for name, param in self.mm_projector.named_parameters()}
+        state_dict = torch.load(path, map_location="cpu")
         self.mm_projector.load_state_dict(state_dict)
+        after_load = {name: param.clone() for name, param in self.mm_projector.named_parameters()}
+        for name in before_load:
+            diff = (before_load[name] - after_load[name]).abs().sum().item()
+            print(f"{name}: total change = {diff}")
         print(f"Loaded projector weights from {path}")
   
     def save_projector_weight(self, path):

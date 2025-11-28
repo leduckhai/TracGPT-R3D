@@ -1,6 +1,5 @@
 from monai.utils.misc import MAX_SEED
 import monai
-# Backup original method
 original_set_random_state = monai.transforms.compose.Compose.set_random_state
 
 def patched_set_random_state(self, seed=None):
@@ -16,18 +15,14 @@ def patched_set_random_state(self, seed=None):
             safe_seed = int(self.R.randint(0, MAX_SEED))
             transform.set_random_state(seed=safe_seed)
 
-# Apply the patch
 monai.transforms.compose.Compose.set_random_state = patched_set_random_state
 from torch.utils.data import Dataset, DataLoader
-from PIL import Image
 import os
 import json
-import pickle
 import sys
 import os
 from dotenv import load_dotenv
 import random
-from sklearn.model_selection import train_test_split
 
 load_dotenv()
 ROOT = os.getenv("ROOT")
@@ -37,16 +32,15 @@ import os
 import numpy as np
 import json
 from src.dataset.transform import base_transform_3d, train_transform
-from functools import lru_cache
 from collections import defaultdict
-# import torchio as tio
 class TracDatasetWhite(Dataset):
-    def __init__(self, data_paths, image_path, mode="train", n_sample=-1, image_shape=[32, 256, 256], dataset_config=None, balance_A4=True):
+    def __init__(self, data_paths, image_path, mode="train", n_sample=-1, image_shape=[32, 256, 256],  balance_A4=True,is_transform=True):
         self.image_shape = image_shape
         self.base_transform = base_transform_3d
         self.img_dir = image_path
         self.sample_indices = []
         self.mode = mode
+        self.is_transform=is_transform
         self.train_transform = train_transform if mode == "train" else None
         random.seed(68)   
         all_data = []
@@ -77,13 +71,18 @@ class TracDatasetWhite(Dataset):
                 balanced.extend(random.choices(items, k=max_len))
             self.sample_indices = [(p, i,a) for p, i, a in balanced]
         else:
+            print("Not balancing dataset")
             self.sample_indices = [(p, i,a) for p, i, a in all_data]
         counter=defaultdict(int)
         random.shuffle(self.sample_indices)
         for _,_,a4 in self.sample_indices:
             counter[a4]+=1
         print("A4 distribution after balancing:", dict(counter))
-
+        self.map={
+            "non":0,
+            "mild":1,
+            "moderate":2,
+        }
 
     def _load_image(self, patient_id, slice_order):
         image_paths = [os.path.join(self.img_dir, patient_id, f"{s}.pkl") for s in slice_order]
@@ -97,23 +96,27 @@ class TracDatasetWhite(Dataset):
         with open(path, "r") as f:
             data_point = json.load(f)[sample_idx]
         image = self._load_image(data_point["Patient ID"], data_point["slice order"])
-        # image = np.expand_dims(image, axis=0)    
-        image = self.base_transform({"image": image})["image"]
-        # image = transformed_subject.image.data 
-        # print("image shape", image.shape)
-        status = ""
-        if self.mode == "train":
-            pretext="The diagnosis is"
-            status = data_point["A4"].lower().replace("-", " ")
-            status = f"{pretext} {status}."
-        if self.train_transform:
-            image = self.train_transform({"image": image})["image"]
-            image=image.squeeze(0)
+        answer = ""
+        if self.mode !="test":
+            answer = data_point["A4"].lower().replace("-", " ")
+            
+        if self.is_transform:
+            image = self.base_transform({"image": image})["image"]
+            if self.train_transform:
+                image = self.train_transform({"image": image})["image"]
+                image=image.squeeze(0)
             
         idx=random.randrange(len(data_point["Q4"]))
         question = data_point["Q4"][idx]
+        for key,value in self.map.items():
+            if key.lower() in data_point["A4"].lower():
+                label_idx=value
+                break
+        else:
+            label_idx=-1
         return {
             "image": image,
+            "slice_order": data_point["slice order"],
             "P_ID": data_point["Patient ID"],
             "question":question,
             "Q1": data_point["Q1"],
@@ -124,7 +127,8 @@ class TracDatasetWhite(Dataset):
             "A2": data_point["A2"],
             "A3": data_point["A3"],
             "A4": data_point["A4"],
-            "answer": status,
+            "answer": answer,
+            "label_idx": label_idx
         }
         
 if __name__ == "__main__":

@@ -69,13 +69,10 @@ class DataProcessor:
         with open(os.path.join(source_dir, "data", f"{p_id}.json"), "rb") as f:
             data = json.load(f)
 
-        # Clean data by removing unwanted keys
         slide_data_map = self._clean_patient_data(data)
         
-        # Process image slices
         patient_chunks = self._process_slices(p_id, source_dir, slide_data_map)
         
-        # Save processed data
         with open(os.path.join(save_data_dir, f"{p_id}.json"), "w") as f:
             json.dump(patient_chunks, f)
             
@@ -268,10 +265,10 @@ class DataProcessor:
 if __name__ == "__main__":
     config = {
         'desc_path': "/root/TracGPT-R3D/src/data_process/desc.json",
-        'source_root': "clean_data",
+        'source_root': "clean_data_s_chain",
         'target_root': "pseudo_3d",
         'num_concat': 32,
-        'tag': "overlap",
+        'tag': "all",
         'splits': ["train", "test"]
     }
     

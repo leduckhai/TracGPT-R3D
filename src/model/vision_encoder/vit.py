@@ -229,7 +229,7 @@ class ViT3DTower(nn.Module):
 
 if __name__ == "__main__":
     image_channel = 1
-    img_size = (32, 256, 256)
+    img_size = (64, 256, 256)
     patch_size = (4, 16, 16)
     batch_size = 1
     args = type("", (), {})()

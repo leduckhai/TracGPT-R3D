@@ -14,7 +14,7 @@ import numpy as np
 import json
 from src.dataset.trac_dataset import TracDataset
 from src.dataset.trac_dataset_white import TracDatasetWhite
-
+from src.dataset.trac_dataset_verify import TracDatasetVerify
 
 def load_data(
     train_val_dir="/root/VLMTrac/chunks/train/data",
@@ -25,12 +25,15 @@ def load_data(
     train_sample=-1,
     val_sample=-1,
     test_sample=-1,
-    dataset_config: dict = {},
+    original=False,
+    overfit_train=False,
 ):
     if dataset == "trac":
         dataset = TracDataset
     elif dataset == "trac_white":
         dataset = TracDatasetWhite
+    elif dataset=="trac_verify":
+        dataset= TracDatasetVerify
 
     train_data_paths = [
         os.path.join(train_val_dir, record) for record in os.listdir(train_val_dir)
@@ -41,27 +44,50 @@ def load_data(
     train_paths, val_paths = train_test_split(
         train_data_paths, test_size=0.1, random_state=12
     )
-    train_set = dataset(
-        data_paths=train_paths,
-        image_path=image_train_path,
-        mode="train",
-        n_sample=train_sample,
-        dataset_config=dataset_config,
-    )
-    val_set = dataset(
-        data_paths=val_paths,
-        image_path=image_train_path,
-        mode="val",
-        n_sample=val_sample,
-        dataset_config=dataset_config,
-    )
-    test_set = dataset(
-        data_paths=test_data_paths,
-        image_path=image_test_path,
-        mode="test",
-        n_sample=test_sample,
-        dataset_config=dataset_config,
-    )
+    if overfit_train:
+        print("Overfitting on training set")
+        # val_paths = train_paths
+        test_data_paths = train_paths
+        image_test_path = image_train_path
+    if original:
+        print("Using original data loading mode")
+        train_set = dataset(
+            data_paths=train_paths,
+            image_path=image_train_path,
+            mode="test",
+            n_sample=train_sample,
+        )
+        val_set = dataset(
+            data_paths=val_paths,
+            image_path=image_train_path,
+            mode="test",
+            n_sample=val_sample,
+        )
+        test_set = dataset(
+            data_paths=test_data_paths,
+            image_path=image_test_path,
+            mode="test",
+            n_sample=test_sample,
+        )
+    else:
+        train_set = dataset(
+            data_paths=train_paths,
+            image_path=image_train_path,
+            mode="train",
+            n_sample=train_sample,
+        )
+        val_set = dataset(
+            data_paths=val_paths,
+            image_path=image_train_path,
+            mode="val",
+            n_sample=val_sample,
+        )
+        test_set = dataset(
+            data_paths=test_data_paths,
+            image_path=image_test_path,
+            mode="test",
+            n_sample=test_sample,
+        )
     return train_set, val_set, test_set
 
 from src.data_process.util import save_nifti
@@ -72,7 +98,6 @@ def save_3d_data(data_paths, image_dir, save_path):
     for path in data_paths:
         with open(path, "r") as f:
             data = json.load(f)
-            # self.sample_indices.extend([(path, i) for i in range(len(data))])
         sample=data[0]
         patient_id = sample["Patient ID"]
         slice_order = sample["slice order"]

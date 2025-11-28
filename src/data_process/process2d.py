@@ -23,7 +23,7 @@ def clear_cache():
         "/tmp/hf_cache",
         "/tmp/hf_cache_new", 
         os.path.expanduser("~/.cache/huggingface/datasets"),
-        "/root/.cache/huggingface/datasets"
+        "/root/.cache/huggingface/datasets",
     ]
     
     for cache_dir in cache_locations:
@@ -85,31 +85,27 @@ def process_dataset(dataset, output_folder, split_name):
             json.dump(data, f, ensure_ascii=False, indent=2)
 
 def main():
-    # Clear cache
-    # clear_cache()
-    
-    # Set up clean cache directory
-    # cache_dir = "/tmp/hf_cache_clean"
-    # os.makedirs(cache_dir, exist_ok=True)
-    
-    # Load dataset
+  
+  
     ds_path="tungvu3196/vlm-project-with-images-with-bbox-images-official-ordered-columns"
     try:
         from datasets import disable_caching
         disable_caching()
     
         logger.info("Loading dataset...")
-        ds = load_dataset(
-            ds_path,
-            # download_mode="force_redownload"
-        )
+        # ds = load_dataset(
+        #     ds_path,
+        # )
+        from datasets import load_dataset
+
+        ds = load_dataset("leduckhai/S-Chain", "English")
         logger.info("Dataset loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load dataset: {str(e)}")
         return
     
     # Prepare output folder
-    output_folder = "./clean_data"
+    output_folder = "./clean_data_s_chain"
     if os.path.exists(output_folder):
         shutil.rmtree(output_folder)
     

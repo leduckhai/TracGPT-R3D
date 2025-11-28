@@ -7,10 +7,11 @@ AI in Dementia Diagnosis Project - Notation.csv
 .venv
 test_gt_50.nii.gz
 
+clean_data_s_chain
 VLMTrac
 
 .env
-**/*.gz
+**/*.gzut
 
 output
 
@@ -26,3 +27,9 @@ DATASET
 only_2d 
 pretrained_ViT.bin
 clean_data_old
+full_eval
+LLaVA
+trainig.log
+verify_image
+verify_label
+etc
