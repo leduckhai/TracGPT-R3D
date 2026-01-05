@@ -39,6 +39,7 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
             refs.extend(class_labels)
             for i in range(len(batch["input_ids"])):
                 print("Input:", tokenizer.decode(batch["input_ids"][i], skip_special_tokens=False))
+            print("Ground Truths:", class_labels)
             generated_ids = model.generate(
                 images=batch["images"],
                 input_ids=batch["input_ids"],   
@@ -68,7 +69,7 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
                 
                 print(f"Sample {i*len(batch_preds)+j}: {pred}")
                 preds.append(pred)
-                raw_preds.append(batch_preds[j])  # Keep original for debugging
+                raw_preds.append(batch_preds[j])  
                 
     # FIX: Save comprehensive results
     results = {
@@ -92,6 +93,7 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
 if __name__ == "__main__":
     from src.collators.standard_collator import StandardCollator
     from src.dataset.dataloader import load_data
+    from metric import calculate_metric
     import yaml
     import shutil   
     config_path="config/vit_llama_3B.yaml"
@@ -102,7 +104,7 @@ if __name__ == "__main__":
     model_config = config["model"]
     # pretrain_path="output/r8qyf5em/checkpoint-678"
     # pretrain_path="output/626yvz3p/checkpoint-120"
-    pretrain_path="output/626yvz3p/checkpoint-678"
+    pretrain_path="output/ocgq0zoy/checkpoint-640"
     tag=pretrain_path.split("/")[1]
     tokenizer,model=load_model(model_config,pretrain_path,lora=True)
     print("eos_token_id",tokenizer.eos_token_id)
@@ -121,9 +123,9 @@ if __name__ == "__main__":
         train_sample=data_config["train_sample"],
         val_sample=data_config["val_sample"],
         test_sample=data_config["test_sample"],
-        dataset_config=data_config["dataset_config"]
+        overfit_train=data_config["overfit_train"]
     )
-    collator=StandardCollator(tokenizer=tokenizer,mode="test")
+    collator=StandardCollator(tokenizer=tokenizer)
     batch_size=2
     test_loader = torch.utils.data.DataLoader(
         test_set,
@@ -157,13 +159,11 @@ if __name__ == "__main__":
     os.makedirs(train_eval_output_dir,exist_ok=True)
     os.makedirs(val_eval_output_dir,exist_ok=True)
     os.makedirs(test_eval_output_dir,exist_ok=True)
-    print("Starting inference on train set")
-    train_metrics = inference(
-        model, tokenizer, train_loader, train_eval_output_dir,
-        
+    test_metrics = inference(
+        model, tokenizer, test_loader, test_eval_output_dir,
     )
-    print("Starting inference on test set")
-    # test_metrics = inference(
-    #     model, tokenizer, test_loader, test_eval_output_dir,
-       
-    # )
+    with open(f"{test_eval_output_dir}/inference_results.json", "r") as f:
+        data=json.load(f)
+        preds = data["predictions"]
+        labels = data["references"]
+        calculate_metric(preds, labels)

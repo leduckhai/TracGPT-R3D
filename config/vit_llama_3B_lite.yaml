@@ -8,16 +8,24 @@ data:
 
   image_train_path: clean_data_s_chain/train/image
   image_test_path: clean_data_s_chain/test/image
+
+
   overfit_train: False
+
+  # train_sample: 30
+  # val_sample: 30
+  # test_sample: 10
+
+  
   train_sample: -1
-  val_sample: -1
+  val_sample: 40
   test_sample: -1
+  # test_sample: -1
   dataloader_pin_memory: False
 general:
   max_eval: 4
   trainer: standard
   collator: "standard"
-
   lora: True
   lora_r: 8
   lora_alpha: 16
@@ -44,13 +52,19 @@ model:
         num_heads: 8
         vision_select_layer: -1
         vision_select_feature: cls_patch
+
     projector:
+      # image_size: [32, 256, 256]
       image_size: [32, 256, 256]
       patch_size: [4, 16, 16]
+      # out_channels: 256
+      # in_channels: 2048
+
       in_embed: 768
       hidden_size: 768
       hiddend_dim: 1072
       out_embed: 3072
+
       layer_type: mlp
       layer_num: 3
       pooling_type: spatial
@@ -61,12 +75,13 @@ training:
   output_dir: "./output"
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 4
-  max_steps: 2000
+  num_train_epochs: 1
   logging_dir: "./logs"  
   eval_strategy: "steps"
-  eval_steps: 150
-  logging_steps: 50
-  save_steps: 150
+  eval_steps: 10
+  logging_steps: 10
+  save_steps: 10
+
   save_strategy: "steps"
   learning_rate: 1e-4
   weight_decay: 0.01

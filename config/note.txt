@@ -7,3 +7,21 @@
   32 slice"
 
   pseudo_3d/32_all_slices/7cc980de-e632-4f11-9805-65acc291fcb7
+
+  qwen-VL
+
+
+  issue with OSA1_52
+
+
+
+
+
+  OSA1_0015
+
+
+  issue OAS1_0052 in test set
+
+
+
+   pseudo_3d/32_all_slices/086cd8e5-5aea-4397-878f-b6d1c30cfeeb

@@ -1,9 +1,13 @@
-import sys 
-sys.path.append("/root/TracGPT-R3D")
+import os
+import sys
+from dotenv import load_dotenv
+load_dotenv()
+ROOT=os.getenv("ROOT")
+sys.path.append(ROOT)
+# sys.path.append("/root/TracGPT-R3D")
 import torch
 from transformers import AutoTokenizer
-import os
-from model.trac_llava import TracLlavaForCausalLM,TracConfig
+from src.model.trac_llava import TracLlavaForCausalLM,TracConfig
 from safetensors.torch import load_file
 from peft import LoraConfig, get_peft_model, PeftModel
 from transformers import AutoModelForCausalLM

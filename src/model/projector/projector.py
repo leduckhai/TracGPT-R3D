@@ -88,9 +88,9 @@ class FullLinear(nn.Module):
         super(FullLinear, self).__init__()
         self.projector=nn.Sequential(
               nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, mid_dim),
+            nn.Linear(in_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(mid_dim, out_dim),
+            nn.Linear(hidden_dim, out_dim),
             nn.LayerNorm(out_dim)   #
             #    nn.Linear(in_dim, out_dim),
             # nn.ReLU(inplace=True),
@@ -126,7 +126,7 @@ def load_mm_projector(config):
     """
     if config["mm_projector_type"] == 'linear':
         return FullLinear(in_dim=config["in_embed"], hidden_dim=config["hidden_dim"], out_dim=config["out_embed"])
-    elif config["mm_projector_type"] == 'spp':
+    elif config["mm_projector_type"] == 'spp_3d':
         print("using spatial pooling projector")
         return SpatialPoolingProjector(
             image_size=config["image_size"],
@@ -256,7 +256,14 @@ if __name__ == "__main__":
     import torch
     # config = SimpleNamespace(mm_hidden_size=2560, hidden_size=758)
 
-    projector = build_mm_projector()
-    x = torch.randn(2, 2048, 2560)  # Example input
+    projector = load_mm_projector(
+        config={
+            "mm_projector_type": "linear",
+            "in_embed": 768,
+            "hidden_dim": 2048,
+            "out_embed": 3072
+        }
+    )
+    x = torch.randn(1,768)  # Example input
     output = projector(x)
     print("Output shape:", output.shape)  # Should be [2, 2048, 758] if spp is used

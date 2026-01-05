@@ -1,0 +1,21 @@
+Jan 3rd 2026
+Train on= pseudo_3d/32_all_slices/0fa350fe-9eb2-4b61-916f-5a29e322f6ab/train/data
+Model path= output/ocgq0zoy/checkpoint-975
+Output path=full_eval/ocgq0zoy_test/inference_results.json
+Metric=
+Class 0: Precision=0.890, Recall=0.644, F1=0.747, Support=202
+Class 1: Precision=0.453, Recall=1.000, F1=0.623, Support=182
+Class 2: Precision=0.000, Recall=0.000, F1=0.000, Support=196
+
+Overall metrics:
+Macro Precision=0.448, Macro Recall=0.548, Macro F1=0.457
+Micro Precision=0.538, Micro Recall=0.538, Micro F1=0.538
+
+
+below is the official dataset S-chain
+pseudo_3d/32_all_slices/086cd8e5-5aea-4397-878f-b6d1c30cfeeb
+full slice:  pseudo_3d/-1_all_slices/8ddb8c04-4d8c-45fe-8a3d-da66309c3d1a
+
+
+version has significant slice 
+full:pseudo_3d/-1_all_slices/18eb3e36-0b00-43e8-b2ac-659ac19a94f6/test/data

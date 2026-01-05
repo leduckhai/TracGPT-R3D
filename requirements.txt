@@ -1,11 +1,11 @@
-torch==2.2.0           
-pandas==2.2.1         
-scikit-learn==1.4.2   
-numpy==1.26.4         
-matplotlib==3.8.4      
+torch        
+pandas        
+scikit-learn
+numpy         
+matplotlib
 torchvision
 peft
-tqdm==4.66.2 
+tqdm 
 datasets 
 nibabel
 transformers
@@ -22,3 +22,5 @@ sentencepiece
 sentence-transformers 
 nltk
 wandb
+opencv-python
+torchio

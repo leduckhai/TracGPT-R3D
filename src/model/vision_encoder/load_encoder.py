@@ -12,6 +12,13 @@ def load_vision_encoder(config):
         vision_select_layer = config["vision_select_layer"]
         vision_select_feature = config["vision_select_feature"]
         pretrained_path=config.get("pretrained_path", None)
+        print("in_channels:", in_channels)
+        print("img_size:", img_size)
+        print("patch_size:", patch_size)
+        print("hidden_size:", hidden_size)
+        print("num_heads:", num_heads)
+        print("vision_select_layer:", vision_select_layer)
+        print("vision_select_feature:", vision_select_feature)
         vision_tower = ViT3DTower(
             in_channels=in_channels,
             img_size=img_size,
@@ -23,6 +30,17 @@ def load_vision_encoder(config):
             pretrained_path=pretrained_path
         )
         return vision_tower
+    # elif config["vision_tower"]=="vit2d":
+    #     print("Loading 2D slice-based ViT vision encoder")
+    #     from src.model.vision_encoder.vit_2d import PretrainedSliceGridEncoder
+    #     vision_tower = PretrainedSliceGridEncoder(
+    #         slice_h=256,
+    #         slice_w=256,
+    #         slices_per_side=8,
+    #         embed_dim=768,
+    #         use_pretrained=True
+    #     )
+    #     return vision_tower
     else:
         raise ValueError(f"Unsupported vision tower config: {config['vision_tower']}")
 
@@ -42,7 +60,7 @@ if __name__=="__main__":
     }
     vision_tower = load_vision_encoder(config)
     # print(vision_tower)
-    input=torch.randn(2,1,32,256,256)
-    output=vision_tower(input)
-    print(output.shape)
+    # input=torch.randn(2,1,32,256,256)
+    # output=vision_tower(input)
+    # print(output.shape)
     

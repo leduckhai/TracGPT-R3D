@@ -87,18 +87,20 @@ def process_dataset(dataset, output_folder, split_name):
 def main():
   
   
-    ds_path="tungvu3196/vlm-project-with-images-with-bbox-images-official-ordered-columns"
+    # ds_path="leduckhai/S-Chain"
     try:
         from datasets import disable_caching
         disable_caching()
     
         logger.info("Loading dataset...")
+        # ds = load_dataset("leduckhai/S-Chain", "English")
+        ds=load_dataset("tungvu3196/vlm-project-with-images-with-bbox-images-with-tree-of-thoughts-with-original")
         # ds = load_dataset(
         #     ds_path,
         # )
-        from datasets import load_dataset
+        # from datasets import load_dataset
 
-        ds = load_dataset("leduckhai/S-Chain", "English")
+        # ds = load_dataset(ds_path)
         logger.info("Dataset loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load dataset: {str(e)}")

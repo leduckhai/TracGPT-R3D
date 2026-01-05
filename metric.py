@@ -1,5 +1,5 @@
 from sklearn.metrics import precision_recall_fscore_support, f1_score, precision_score, recall_score
-
+from collections import defaultdict
 gt_labels={
     "Non-Dementia": 0,
     "Mild-Dementia": 1, 
@@ -7,15 +7,20 @@ gt_labels={
 }
 
 pred_labels={
-    "non dementia": 0,  
-    "mild dementia": 1, 
-    "moderate dementia": 2
+    "non": 0,  
+    "mild": 1, 
+    "moderate": 2
 }
+
 def calculate_metric(preds, labels):
+    for label in labels:
+        if label not in gt_labels:
+            print("New GT label found:", label)
+            # gt_labels[label]=len(gt_labels)
     gt_mapped = [gt_labels.get(label, -1) for label in labels]
     
-    if -1 in gt_mapped: 
-        raise ValueError("Some ground truth labels are not recognized.")    
+    # if -1 in gt_mapped: 
+    #     raise ValueError("Some ground truth labels are not recognized.")    
     pred_mapped=[]
     for pred in preds:
         found=False
@@ -25,6 +30,7 @@ def calculate_metric(preds, labels):
                 found=True
                 break
         if not found:
+            print("New Pred label found:", pred)
             pred_mapped.append(-1) 
     gt_counter={}
     pred_counter={}
@@ -60,7 +66,7 @@ def calculate_metric(preds, labels):
     print(f"Macro Precision={macro_precision:.3f}, Macro Recall={macro_recall:.3f}, Macro F1={macro_f1:.3f}")
     print(f"Micro Precision={micro_precision:.3f}, Micro Recall={micro_recall:.3f}, Micro F1={micro_f1:.3f}")  
 if __name__ == "__main__":
-    result_path="output/ux7px8hw/inference_results.json"
+    result_path="full_eval/ocgq0zoy_test/inference_results.json"
     import json
     with open(result_path, "r") as f:
         data = json.load(f)

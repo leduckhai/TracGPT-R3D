@@ -1,56 +1,128 @@
-import os
+import os 
 import json
-from tqdm import tqdm
-import shutil
 from collections import defaultdict
-from src.dataset.dataloader import load_data
-from src.data_process.util import bboxes_to_filled_volume, bboxes_to_wireframe_volume,draw_3d_bbox_wireframe_v2, draw_3d_bbox_filled,draw_3d_bbox_wireframe,convert_list_slice_paths_to_3d,save_nifti,group_and_merge_3d_bboxes_v2
+import shutil
+import re
+import pandas as pd
 
-def save_data(dataset, save_image_dir, save_labels_dir):
-    if os.path.exists(save_image_dir):
-        shutil.rmtree(save_image_dir)
-    if os.path.exists(save_labels_dir):
-        os.remove(save_labels_dir)
-    os.makedirs(save_image_dir, exist_ok=True)
-    save_label_dir="verify_label"
-    os.makedirs(save_label_dir, exist_ok=True)
-    test_labels=[]
+test_data_raw_path="clean_data_s_chain/test/data"
+process_data_path="pseudo_3d/32_all_slices/7cc980de-e632-4f11-9805-65acc291fcb7/test/data"
 
-    for i, sample in enumerate(tqdm(dataset, desc="Testing")):
-        p_id,Q1,A1,Q2,A2,Q3,A3,Q4,A4=sample["P_ID"],sample["Q1"],sample["A1"],sample["Q2"],sample["A2"],sample["Q3"],sample["A3"],sample["Q4"],sample["A4"]
-        # bboxes=group_and_merge_3d_bboxes_v2(A1, num_concat=32)
-        image=sample["image"]
-        print("iamge shape:", image.shape)
-        save_image_path=os.path.join(save_image_dir,f"image_{i}.nii.gz")
-        save_label_path=os.path.join(save_label_dir,f"bbox_{i}.nii.gz")
-        save_nifti(image, save_image_path)
-        # save_nifti(bboxes_to_filled_volume(image.shape,bboxes), save_label_path)
-        meta={}
-        meta["sample_index"]=i
-        meta["A4"]=A4
-        meta["P_ID"]=p_id
-        test_labels.append(meta)
+# test_raw_output_file="test_raw.json"
+test_raw_output_dir="test_raw_outputs"
+test_processed_output_dir="test_processed_outputs"
+# test_processed_output_file="test_processed.json"
+def group_files(file_list):
+    group=defaultdict(list)
+    sorted = sort_files(file_list)
+    for f in sorted:
+        id= f.split("_")[0].split("-")[1]
+        group[id].append(f)
+    return list(group.values())
+
+def sort_files(file_list):
+    def sort_key(filename):
+        numbers = list(map(int, re.findall(r'\d+', filename)))[::-1]
+        return numbers 
+
+    sorted_files = sorted(file_list, key=sort_key)
+    return sorted_files
+def process_raw_data():
+    all_raw_files = os.listdir(test_data_raw_path)
+    print("All processed files:", all_raw_files)
+    for file in all_raw_files:
+        print("Processing file:", file)
+        with open(os.path.join(test_data_raw_path, file), "r") as f:
+            raw_data = json.load(f)
+        saved_path=os.path.join(test_raw_output_dir,file)
+        print("Saved processed file path:", saved_path)   
+        unique_status=defaultdict(list)
+        print("Unique A4 statuses in file:", unique_status)
+        unique_bbox_status=defaultdict(list)
+        for item in raw_data:
+            s=item["A3"]
+            print("Processing A3 status:", s)
+            try:
+                for pair in [p.strip() for p in s.split(",")]:
+                    key, value = pair.split("=")
+                    dict_key=key.strip()+"_"+value.strip()
+                    unique_bbox_status[dict_key].append(item["Slide"])
+            except Exception as e:
+                print(f"Error merging A3 data {s}: {e}")
+            unique_status[item["A4"]].append(item["Slide"])
+        unique_bbox_status={k:group_files(v) for k,v in unique_bbox_status.items() if v}
+        save_data={
+            "unique_A3_status": dict(unique_bbox_status),
+            "unique_A4_status": dict(unique_status),
+        }
+        with open(saved_path, "w") as f:
+            json.dump(save_data, f, indent=4)
+def process_processed_data():
+    all_processed_files = os.listdir(process_data_path)
+    print("All processed files:", all_processed_files)
+    for file in all_processed_files:
+        print("Processing file:", file)
+        with open(os.path.join(process_data_path, file), "r") as f:
+            processed_data = json.load(f)
+        saved_path=os.path.join(test_processed_output_dir,file)
+        print("Saved processed file path:", saved_path)   
+        unique_status=defaultdict(list)
+        print("Unique A4 statuses in file:", unique_status)
+        unique_bbox_status=defaultdict(list)
+        slice_order_idx={}
+        for i,item in enumerate(processed_data):
+            slice_order_idx[i]=item["slice order"]
+            s=item["A3"]
+            print("Processing A3 status:", s)
+            try:
+                for k,v in s.items():
+                    dict_key=str(k)+"_"+str(v)
+                    unique_bbox_status[dict_key].append(i)
+            except Exception as e:
+                print(f"Error merging A3 data {s}: {e}")
+            unique_status[item["A4"]].append(i)
+        
+        save_data={
+            "unique_A3_status": dict(unique_bbox_status),
+            "unique_A4_status": dict(unique_status),
+            "slice_order_idx": slice_order_idx,
+        }
+        with open(saved_path, "w") as f:
+            json.dump(save_data, f, indent=4)
+def map_significant_slices():
+    significant_slice_path="significant_slice.csv"
+    if not os.path.exists(significant_slice_path):
+        print(f"Significant slice file not found: {significant_slice_path}")
+        return
+
+    df = pd.read_csv(significant_slice_path)
+    result = (
+    df.dropna(subset=["Slide"])        # optional: remove rows where Slide is NaN
+      .groupby("Patient ID")
+     .apply(lambda g: list(zip(g["Slide"], g["Bbox coordinates normalized (X, Y, W, H)"])))
+      .apply(list)
+      .to_dict()
+)
     
-    with open(save_labels_dir, "w") as f:
-        json.dump(test_labels, f, indent=4)
-    print(f"Saved test labels to {save_labels_dir}")
-if __name__ == "__main__":
-    train_val_dir= "pseudo_3d/-1_all_slices/07eaa1bc-b53a-4126-accf-92509623ecdb/train/data"
-    test_dir="pseudo_3d/-1_all_slices/07eaa1bc-b53a-4126-accf-92509623ecdb/test/data"
-    image_train_path="clean_data/train/image_with_bboxes"
-    image_test_path= "clean_data/test/image_with_bboxes"
-    train_set, val_set, test_set = load_data(
-        train_val_dir=train_val_dir,
-        test_dir=test_dir,
-        image_train_path=image_train_path,
-        image_test_path=image_test_path,
-        dataset="trac_white",
-        original=True,
-    )   
-    print("len train_set:", len(train_set))
-    print("len val_set:", len(val_set))
-    print("len test_set:", len(test_set))
+    sample_path="pseudo_3d/32_all_slices/0fa350fe-9eb2-4b61-916f-5a29e322f6ab/train/data/OAS1_0002.json"
+    with open(sample_path, "r") as f:
+        sample_data = json.load(f)
+    p_id="OAS1_0002"
+    significant_slices = result.get(p_id, [])
+    print(f"Significant slices for patient {p_id}:", significant_slices)
+    for item in sample_data:
+        slice_order=item["slice order"]
+        match_slice_tuple=[s for s, _ in significant_slices if s in slice_order]
+        print("Matching significant slices in slice order:", match_slice_tuple)      
+    process_data_path=""
+if __name__=="__main__":
+    # if os.path.exists(test_raw_output_dir):
+    #     shutil.rmtree(test_raw_output_dir)
+    # if os.path.exists(test_processed_output_dir):
+    #     shutil.rmtree(test_processed_output_dir)
+    # os.makedirs(test_raw_output_dir, exist_ok=True)
+    # os.makedirs(test_processed_output_dir, exist_ok=True)
+    # process_raw_data()
+    # process_processed_data()
+    map_significant_slices()
 
-    save_data(train_set, "verify_image/train", "verify_label/train_labels.json")
-    save_data(val_set, "verify_image/val", "verify_label/val_labels.json")
-    save_data(test_set, "verify_image/test", "verify_label/test_labels.json")

@@ -3,6 +3,7 @@ import torch
 from tqdm import tqdm
 import os
 import json 
+import numpy as np
 class StandardTrainer(Trainer):
     def __init__(self, tracker ,overfit=False, test_dataset=None, *args, **kwargs):
         self.tracker = tracker
@@ -20,32 +21,18 @@ class StandardTrainer(Trainer):
             'input_ids': inputs['input_ids'].to(model.device, non_blocking=True),
             'attention_mask': inputs['attention_mask'].to(model.device, non_blocking=True),
             'labels': inputs['labels'].to(model.device, non_blocking=True),
-            'aux_labels': inputs['aux_labels'].to(model.device, non_blocking=True) 
+            # 'aux_labels': inputs['aux_labels'].to(model.device, non_blocking=True) 
         }
-        print("question text", inputs.get("question_texts", [""]))
+        pids=inputs["p_ids"]
+        class_labels=inputs["class_labels"]
+        print("patient ids", pids)
+        print("class labels", class_labels)
         output=model(**batch)
-        loss=output["loss"]
-        if output["aux_loss"] is not None:
-            aux_loss=output["aux_loss"].item()
-        else:
-            aux_loss=0.0
-        if output["lm_loss"] is not None:
-            lm_loss=output["lm_loss"].item()
-        else:
-            lm_loss=0.0
-        
-        # if num_items_in_batch is not None:
-        #     loss = loss / num_items_in_batch
-
-        # if self.args.fp16:
-        #     self.scaler.scale(loss).backward()
-        # else:
+        loss=output.loss
         loss.backward()
         if self.state.global_step % self.args.logging_steps == 0:
             self.tracker.log({
                 "train/loss": loss.item(),
-                "train/lm_loss": lm_loss,
-                "train/aux_loss": aux_loss,
                 "train/mem_alloc": torch.cuda.memory_allocated()/1e9  # Monitor memory
             }, step=self.state.global_step)
        
@@ -71,6 +58,10 @@ class StandardTrainer(Trainer):
                         'attention_mask': inputs['attention_mask'].to(model.device, non_blocking=True),
                         'labels': inputs['labels'].to(model.device, non_blocking=True)
                     }
+                    pids=inputs["p_ids"]
+                    class_labels=inputs["class_labels"]
+                    print("patient ids", pids)
+                    print("class labels", class_labels)
                     outputs = model(**batch)
                     loss = outputs.loss
                     
@@ -80,6 +71,9 @@ class StandardTrainer(Trainer):
                             "eval/loss": loss.item(),
                             "eval/mem_alloc": torch.cuda.memory_allocated()/1e9  
                         }, step=self.state.global_step)
+                mean_loss = float(np.mean(losses))
+                metrics = {"eval_loss": mean_loss}
+                return metrics
             else:
                 print("Overfitting evaluation mode")
                 for i, inputs in enumerate(tqdm(data_loader, desc="Inference")):      
@@ -89,7 +83,10 @@ class StandardTrainer(Trainer):
                     input_ids=inputs.get("input_ids", []).to(self.model.device)
                     attention_mask=inputs.get("attention_mask", []).to(self.model.device)            
                     refs.extend(class_labels)  
-                    print("question text", inputs.get("question_texts", [""]))
+                    pids=inputs["p_ids"]
+                    class_labels=inputs["class_labels"]
+                    print("patient ids", pids)
+                    print("class labels", class_labels)
                     generated_ids = self.model.generate(
                         images=images,
                         input_ids=input_ids,
@@ -134,7 +131,7 @@ class StandardTrainer(Trainer):
         dataloader = self.get_eval_dataloader(eval_dataset)
         with torch.inference_mode():
             for i, inputs in enumerate(tqdm(dataloader, desc="Inference")):      
-                full_texts = inputs.get("full_texts", [])
+                # full_texts = inputs.get("full_texts", [])
                 class_labels = inputs.get("class_labels", [])
                 images=inputs.get("images", []).to(self.model.device)  
                 input_ids=inputs.get("input_ids", []).to(self.model.device)

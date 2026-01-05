@@ -14,7 +14,7 @@ import numpy as np
 import json
 from src.dataset.trac_dataset import TracDataset
 from src.dataset.trac_dataset_white import TracDatasetWhite
-from src.dataset.trac_dataset_verify import TracDatasetVerify
+from src.dataset.trac_dataset_cot import TracDatasetCoT
 
 def load_data(
     train_val_dir="/root/VLMTrac/chunks/train/data",
@@ -32,9 +32,8 @@ def load_data(
         dataset = TracDataset
     elif dataset == "trac_white":
         dataset = TracDatasetWhite
-    elif dataset=="trac_verify":
-        dataset= TracDatasetVerify
-
+    elif dataset == "trac_cot":
+        dataset = TracDatasetCoT
     train_data_paths = [
         os.path.join(train_val_dir, record) for record in os.listdir(train_val_dir)
     ]
@@ -46,48 +45,28 @@ def load_data(
     )
     if overfit_train:
         print("Overfitting on training set")
-        # val_paths = train_paths
         test_data_paths = train_paths
         image_test_path = image_train_path
-    if original:
-        print("Using original data loading mode")
-        train_set = dataset(
-            data_paths=train_paths,
-            image_path=image_train_path,
-            mode="test",
-            n_sample=train_sample,
-        )
-        val_set = dataset(
-            data_paths=val_paths,
-            image_path=image_train_path,
-            mode="test",
-            n_sample=val_sample,
-        )
-        test_set = dataset(
-            data_paths=test_data_paths,
-            image_path=image_test_path,
-            mode="test",
-            n_sample=test_sample,
-        )
-    else:
-        train_set = dataset(
-            data_paths=train_paths,
-            image_path=image_train_path,
-            mode="train",
-            n_sample=train_sample,
-        )
-        val_set = dataset(
-            data_paths=val_paths,
-            image_path=image_train_path,
-            mode="val",
-            n_sample=val_sample,
-        )
-        test_set = dataset(
-            data_paths=test_data_paths,
-            image_path=image_test_path,
-            mode="test",
-            n_sample=test_sample,
-        )
+        val_paths = train_paths[:len(val_paths)]
+        
+    train_set = dataset(
+        data_paths=train_paths,
+        image_path=image_train_path,
+        mode="train",
+        n_sample=train_sample,
+    )
+    val_set = dataset(
+        data_paths=val_paths,
+        image_path=image_train_path,
+        mode="val",
+        n_sample=val_sample,
+    )
+    test_set = dataset(
+        data_paths=test_data_paths,
+        image_path=image_test_path,
+        mode="test",
+        n_sample=test_sample,
+    )
     return train_set, val_set, test_set
 
 from src.data_process.util import save_nifti

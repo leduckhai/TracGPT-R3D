@@ -1,6 +1,6 @@
 data:
   data_root: "./data/"
-  dataset: "trac_white"
+  dataset: "trac_cot"
   train_val_split: 0.9
 
   train_val_dir: pseudo_3d/32_all_slices/0fa350fe-9eb2-4b61-916f-5a29e322f6ab/train/data
@@ -13,6 +13,8 @@ data:
   val_sample: -1
   test_sample: -1
   dataloader_pin_memory: False
+  config:
+    significant_slice
 general:
   max_eval: 4
   trainer: standard
@@ -61,12 +63,12 @@ training:
   output_dir: "./output"
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 4
-  max_steps: 2000
+  max_steps: 1000
   logging_dir: "./logs"  
   eval_strategy: "steps"
-  eval_steps: 150
+  eval_steps: 100
   logging_steps: 50
-  save_steps: 150
+  save_steps: 100
   save_strategy: "steps"
   learning_rate: 1e-4
   weight_decay: 0.01

@@ -64,6 +64,7 @@ class DataProcessor:
 
         logger.info(f"Total data processed for {split}: {total_data}")
         logger.info(f"Processed data saved to: {save_data_dir}")
+        
     def _process_patient(self, p_id, source_dir, save_data_dir):
         """Process data for a single patient."""
         with open(os.path.join(source_dir, "data", f"{p_id}.json"), "rb") as f:
@@ -102,16 +103,19 @@ class DataProcessor:
         
         patient_chunks = []
         for subgroup in slide_subgroups:
-            slide_shape_map, annot_shape_map = self._load_slice_data(p_id, source_dir, subgroup)
-            valid_slides = self._filter_valid_slides(subgroup, slide_shape_map)
-            
-            if self.config['num_concat'] == -1:
-                patient_chunks.append(self.merge_slices(valid_slides, slide_data_map))
-            else:
-                for i in range(0, len(valid_slides) - self.config['num_concat'] + 1):
-                    chunk_slides = valid_slides[i:i + self.config['num_concat']]
-                    patient_chunks.append(self.merge_slices(chunk_slides, slide_data_map))
-                    
+            try:
+                slide_shape_map, annot_shape_map = self._load_slice_data(p_id, source_dir, subgroup)
+                valid_slides = self._filter_valid_slides(subgroup, slide_shape_map)
+                
+                if self.config['num_concat'] == -1:
+                    patient_chunks.append(self.merge_slices(valid_slides, slide_data_map))
+                else:
+                    for i in range(0, len(valid_slides) - self.config['num_concat'] + 1):
+                        chunk_slides = valid_slides[i:i + self.config['num_concat']]
+                        patient_chunks.append(self.merge_slices(chunk_slides, slide_data_map))
+            except Exception as e:
+                logger.error(f"Error processing slices for patient {p_id}: {e}")
+                continue          
         return patient_chunks
 
     def _load_slice_data(self, p_id, source_dir, subgroup):
@@ -127,7 +131,9 @@ class DataProcessor:
                 slice_data = pickle.load(f)
             with open(os.path.join(annot_slide_dir, f"{slide}.pkl"), "rb") as f:
                 annot_data = pickle.load(f)
-                
+            if slice_data is None or annot_data is None:
+                print("No data found for slide:", slide, "pid", p_id)
+                return _
             slide_shape_map[slide] = self.rgb_to_grayscale(slice_data)
             annot_shape_map[slide] = self.rgb_to_grayscale(annot_data)
             
@@ -151,21 +157,39 @@ class DataProcessor:
     def merge_slices(self, list_slices, slice_data_map):
         """Merge data from multiple slices into a single output."""
         slice_data = [slice_data_map[s] for s in list_slices]
-        
-        return {
-            "Patient ID": slice_data[0]["Patient ID"],
-            "Q1": list(set(slice["Q1"] for slice in slice_data)),
-            "Q2": list(set(slice["Q2"] for slice in slice_data)),
-            "Q3": list(set(slice["Q3"] for slice in slice_data)),
-            "Q4": list(set(slice["Q4"] for slice in slice_data)),
-            "A1": self.merge_A1_data([slice["A1"] for slice in slice_data]),
-            "A3": self.merge_A3_data([slice["A3"] for slice in slice_data]),
-            "A2": self.merge_A2_data(self.merge_A3_data([slice["A3"] for slice in slice_data])),
-            "A4": self.merge_A4_data([slice["A4"] for slice in slice_data]),
-            "bbox_3d": group_and_merge_3d_bboxes_v2(
-                [ast.literal_eval(slice["A1"]) for slice in slice_data]),
-            "slice order": list_slices
-        }
+        try:
+            bbox_3d= group_and_merge_3d_bboxes_v2(
+                [ast.literal_eval(slice_["A1"]) for slice_ in slice_data])
+            return {
+                "Patient ID": slice_data[0]["Patient ID"],
+                "Q1": list(set(slice_["Q1"] for slice_ in slice_data)),
+                "Q2": list(set(slice_["Q2"] for slice_ in slice_data)),
+                "Q3": list(set(slice_["Q3"] for slice_ in slice_data)),
+                "Q4": list(set(slice_["Q4"] for slice_ in slice_data)),
+                "A1": self.merge_A1_data([slice_["A1"] for slice_ in slice_data]),
+                "A3": self.merge_A3_data([slice_["A3"] for slice_ in slice_data]),
+                "A2": self.merge_A2_data(self.merge_A3_data([slice_["A3"] for slice_ in slice_data])),
+                "A4": self.merge_A4_data([slice_["A4"] for slice_ in slice_data]),
+                "bbox_3d": bbox_3d,
+                "slice order": list_slices
+            }
+        except Exception as e:
+            logger.info(f"Error merging slices for patient {slice_data[0]['Patient ID']}: {e}")
+            return {}
+        # return {
+        #     "Patient ID": slice_data[0]["Patient ID"],
+        #     "Q1": list(set(slice["Q1"] for slice in slice_data)),
+        #     "Q2": list(set(slice["Q2"] for slice in slice_data)),
+        #     "Q3": list(set(slice["Q3"] for slice in slice_data)),
+        #     "Q4": list(set(slice["Q4"] for slice in slice_data)),
+        #     "A1": self.merge_A1_data([slice["A1"] for slice in slice_data]),
+        #     "A3": self.merge_A3_data([slice["A3"] for slice in slice_data]),
+        #     "A2": self.merge_A2_data(self.merge_A3_data([slice["A3"] for slice in slice_data])),
+        #     "A4": self.merge_A4_data([slice["A4"] for slice in slice_data]),
+        #     "bbox_3d": group_and_merge_3d_bboxes_v2(
+        #         [ast.literal_eval(slice["A1"]) for slice in slice_data]),
+        #     "slice order": list_slices
+        # }
 
     def merge_A1_data(self,list_A1):
         """Merge A1 (bounding box) data."""
@@ -264,7 +288,7 @@ class DataProcessor:
 
 if __name__ == "__main__":
     config = {
-        'desc_path': "/root/TracGPT-R3D/src/data_process/desc.json",
+        'desc_path': "/root/repo/TracGPT-R3D/src/data_process/desc.json",
         'source_root': "clean_data_s_chain",
         'target_root': "pseudo_3d",
         'num_concat': 32,

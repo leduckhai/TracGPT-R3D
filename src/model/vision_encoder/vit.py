@@ -162,7 +162,10 @@ class ViT3DTower(nn.Module):
         self.vision_tower = ViT(**vit_kwargs)
         if pretrained_path is not None:
             try:
+                  # 1. Load pre-trained weights
                 state_dict = torch.load(pretrained_path, map_location="cpu")
+
+                # 2. Apply string-based mapping rules (optional)
                 if mapping_rules:
                     new_state = {}
                     for k, v in state_dict.items():
@@ -172,26 +175,81 @@ class ViT3DTower(nn.Module):
                                 new_k = new_k.replace(frm, to)
                         new_state[new_k] = v
                     state_dict = new_state
+
+                # 3. Apply custom manual mapping for specific keys
+                model_state = self.vision_tower.state_dict()
+                custom_mapping = {
+                    "patch_embedding.patch_embeddings.weight": "patch_embedding.patch_embeddings.0.weight",
+                    "patch_embedding.patch_embeddings.bias": "patch_embedding.patch_embeddings.0.bias",
+                }
+                print("custom mapping", custom_mapping)
+                for ckpt_key, model_key in custom_mapping.items():
+                    if ckpt_key in state_dict and model_key in model_state:
+                        state_dict[model_key] = state_dict.pop(ckpt_key)
+
+                # 4. Load state dict with strict=False
                 missing_keys, unexpected_keys = self.vision_tower.load_state_dict(state_dict, strict=False)
 
+                # 5. Print summary
                 print(f"Number of layers in pre-trained weights: {len(state_dict.keys())}")
                 print(f"Number of successfully loaded layers: {len(state_dict.keys()) - len(missing_keys)}")
                 print(f"Number of missing keys (layers not found in your model): {len(missing_keys)}")
                 print(f"Number of unexpected keys (extra layers in state dict): {len(unexpected_keys)}")
 
-                print("\n--- Missing Keys (Layers in pre-trained model but not in yours) ---")
+                print("\n--- Missing Keys ---")
                 for key in missing_keys:
                     print(f"  {key}")
 
-                print("\n--- Unexpected Keys (Layers in your model but not in pre-trained) ---")
+                print("\n--- Unexpected Keys ---")
                 for key in unexpected_keys:
                     print(f"  {key}")
 
+                # 6. Matching percentage
                 total_pretrained_keys = len(state_dict.keys())
                 matched_keys = total_pretrained_keys - len(missing_keys)
                 matching_percentage = (matched_keys / total_pretrained_keys) * 100
-
                 print(f"\nSummary: {matched_keys}/{total_pretrained_keys} layers matched ({matching_percentage:.2f}%)")
+
+            #     state_dict = torch.load(pretrained_path, map_location="cpu")
+            #     if mapping_rules:
+            #         new_state = {}
+            #         for k, v in state_dict.items():
+            #             new_k = k
+            #             for frm, to in mapping_rules:
+            #                 if frm in new_k:
+            #                     new_k = new_k.replace(frm, to)
+            #             new_state[new_k] = v
+            #         state_dict = new_state
+            #     missing_keys, unexpected_keys = self.vision_tower.load_state_dict(state_dict, strict=False)
+
+            #     print(f"Number of layers in pre-trained weights: {len(state_dict.keys())}")
+            #     print(f"Number of successfully loaded layers: {len(state_dict.keys()) - len(missing_keys)}")
+            #     print(f"Number of missing keys (layers not found in your model): {len(missing_keys)}")
+            #     print(f"Number of unexpected keys (extra layers in state dict): {len(unexpected_keys)}")
+
+            #     print("\n--- Missing Keys (Layers in pre-trained model but not in yours) ---")
+            #     for key in missing_keys:
+            #         print(f"  {key}")
+
+            #     print("\n--- Unexpected Keys (Layers in your model but not in pre-trained) ---")
+            #     for key in unexpected_keys:
+            #         print(f"  {key}")
+                    
+            #     mapping = {
+            #     "patch_embedding.patch_embeddings.weight": "patch_embedding.patch_embeddings.0.weight",
+            #     "patch_embedding.patch_embeddings.bias": "patch_embedding.patch_embeddings.0.bias",
+            # }
+
+            #     for ckpt_key, model_key in mapping.items():
+            #         if ckpt_key in pretrained_state and model_key in model_state:
+            #             model_state[model_key] = pretrained_state[ckpt_key]
+
+
+            #     total_pretrained_keys = len(state_dict.keys())
+            #     matched_keys = total_pretrained_keys - len(missing_keys)
+            #     matching_percentage = (matched_keys / total_pretrained_keys) * 100
+
+            #     print(f"\nSummary: {matched_keys}/{total_pretrained_keys} layers matched ({matching_percentage:.2f}%)")
 
             except Exception as e:
                 print(f"Error loading pre-trained weights: {e} \n Falling back to randomly initialized model.")
@@ -228,27 +286,37 @@ class ViT3DTower(nn.Module):
 
 
 if __name__ == "__main__":
-    image_channel = 1
-    img_size = (64, 256, 256)
-    patch_size = (4, 16, 16)
+    # image_channel = 1
+    img_size = [32, 256, 256]
+    # patch_size = [4, 16, 16]
     batch_size = 1
-    args = type("", (), {})()
-    args.image_channel = image_channel
-    args.img_size = img_size
-    args.patch_size = patch_size
-    args.vision_select_layer = -1
-    args.vision_select_feature = "cls_patch"
-    args.hidden_size = 512
-    args.vision_tower = "vit3d"
-    args.mm_projector_type = "spp"
-    args.proj_layer_type = "linear"
-    args.proj_layer_num = 2
-    args.proj_pooling_type = "spatial"
-    args.proj_pooling_size = 2
-    args.num_heads = 8
+    # args = type("", (), {})()
+    # args.image_channel = image_channel
+    # args.img_size = img_size
+    # args.patch_size = patch_size
+    # args.vision_select_layer = -1
+    # args.vision_select_feature = "cls_patch"
+    # args.hidden_size = 512
+    # args.vision_tower = "vit3d"
+    # args.mm_projector_type = "spp"
+    # args.proj_layer_type = "linear"
+    # args.proj_layer_num = 2
+    # args.proj_pooling_type = "spatial"
+    # args.proj_pooling_size = 2
+    # args.num_heads = 8
 
     img = torch.randn((batch_size, 1, *img_size)).to("cuda")
-    model = ViT3DTower(args)
+    model = ViT3DTower(
+        in_channels=1,
+        # img_size=(64, 256, 256),
+         img_size=img_size,
+        patch_size=(4, 16, 16),
+        hidden_size=768,
+        num_heads=8,
+        vision_select_layer=-1,
+        vision_select_feature="cls_patch",
+        pretrained_path=None
+    )
     model = model.to("cuda")
     output = model(img)
     print("Output shape:", output.shape)

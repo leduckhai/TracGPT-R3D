@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from transformers.modeling_utils import PreTrainedModel
 import sys
-from transformers.configuration_utils import PretrainedConfig
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM,AutoModel
 import os
 from dotenv import load_dotenv
@@ -12,20 +11,16 @@ sys.path.append(ROOT)
 from transformers.generation.utils import GenerationMixin
 from src.model.vision_encoder.load_encoder import load_vision_encoder
 from src.model.projector.projector import load_mm_projector
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers import StoppingCriteria, StoppingCriteriaList
-from transformers import LlamaForCausalLM
-from transformers import LlamaConfig
 import numpy as np
 from src.model.base_model import BaseModel
 import torch.nn.functional as F
+from transformers import LlamaConfig
 
 CONTROLLER_HEART_BEAT_EXPIRATION = 30
 WORKER_HEART_BEAT_INTERVAL = 15
 
 LOGDIR = "."
 
-# Model Constants
 IGNORE_INDEX = -100
 IMAGE_TOKEN_ID = -200
 DEFAULT_IMAGE_TOKEN = "<image>"
@@ -56,6 +51,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
         self.lm_model = AutoModelForCausalLM.from_pretrained(
             base_model_name,
         )
+        self.embed_tokens=self.lm_model.model.embed_tokens
 
         old_emb = self.lm_model.get_input_embeddings()
         old_num, hidden_size = old_emb.weight.shape
@@ -69,7 +65,7 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
         self.mm_projector = load_mm_projector(cfg["projector"])
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        # self._device=device
+        self._device = device
         self.vision_encoder.to(device)
         self.mm_projector.to(device)
 
@@ -79,11 +75,6 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
                 p.requires_grad = False
 
         self.n_class = 3
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, self.n_class)
-        )
 
     def freeze_llm(self):
         for name, p in self.lm_model.named_parameters():
@@ -114,82 +105,64 @@ class TracLlavaForCausalLM(GenerationMixin, PreTrainedModel,BaseModel):
         do_sample=False,
         **kwargs
     ):
+        inputs_embeds, _, attention_mask, position_ids = self.prepare_input(
+        input_ids=input_ids,
+        images=images,
+        attention_mask=attention_mask,
+        position_ids=position_ids,
+        )
+
+        inputs_embeds = inputs_embeds.to(self._device)
+        attention_mask = attention_mask.to(self._device)
+        if position_ids is not None:
+            position_ids = position_ids.to(self._device)
+
+        return self.lm_model.generate(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            max_new_tokens=max_new_tokens,
+            num_beams=num_beams,
+            do_sample=do_sample,
+            **kwargs
+        )
+       
+    def get_image_embeddings(self, images):
+        return self.encode_single_image(images)
+    
+    def classify(self,images):
+        return self.classifier(images)
+        
+    def forward(self, input_ids=None,attention_mask=None, labels=None, **kwargs):
         device = next(self.parameters()).device
-        if input_ids is not None:
-            input_ids = input_ids.to(device)
-
-        if images is not None:
-            inputs_embeds, _, attention_mask, position_ids = self.prepare_input(
-                input_ids=input_ids,
-                images=images,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                
-            )
-            inputs_embeds = inputs_embeds.to(device)
-
-            outputs = self.lm_model.generate(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                max_new_tokens=max_new_tokens,
-                num_beams=num_beams,
-                do_sample=do_sample,
-                **kwargs
-            )
-        else:
-            outputs = self.lm_model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=max_new_tokens,
-                num_beams=num_beams,
-                do_sample=do_sample,
-                **kwargs
-            )
-        return outputs
-
-    def forward(self, input_ids=None, images=None, attention_mask=None, labels=None, **kwargs):
-        device = next(self.parameters()).device
-
+        images=kwargs.get("images", None)
+        # image_features=kwargs.get("image_features", None)
         if images is not None:
             inputs_embeds, labels, attention_mask, position_ids = self.prepare_input(
                 input_ids=input_ids,
                 images=images,
                 attention_mask=attention_mask,
                 labels=labels,
+                # image_features=image_features
                 
             )
             inputs_embeds = inputs_embeds.to(device)
             input_ids = None  
         else:
-            inputs_embeds = None
-            if input_ids is not None:
-                input_ids = input_ids.to(device)
+            inputs_embeds = kwargs.get("inputs_embeds", None)
+            # if input_ids is not None:
+            #     input_ids = input_ids.to(device)
         outputs = self.lm_model(
-            input_ids=input_ids,
+            input_ids=None,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             labels=labels,
             position_ids=position_ids,
-             output_hidden_states=True,
+            #  output_hidden_states=True,
              return_dict=True,
         )
-
-        hidden =  outputs.hidden_states[-1]  
-        lm_logits = outputs.logits          # [B, T, vocab]
-
-        pooled = hidden.mean(dim=1)         # [B, H]
-        class_logits = self.classifier(pooled)
-
-        aux_labels = kwargs.get("aux_labels", None)
-        aux_loss = F.cross_entropy(class_logits, aux_labels) if aux_labels is not None else None
-
-        total_loss = outputs.loss + self.alpha * aux_loss if aux_loss is not None else outputs.loss or aux_loss
-
-        return {
-            "loss": total_loss,
-            "lm_loss": outputs.loss,
-            "aux_loss": aux_loss,
-        }
+        return outputs
+        
 def decode_labels(tokenizer, labels_tensor):
     labels = labels_tensor.clone()
     labels[labels == -100] = tokenizer.pad_token_id
@@ -201,9 +174,10 @@ if __name__ == "__main__":
 
     from src.dataset.dataloader import load_data
     from src.collators.load_collator import load_collator
+    # from src.model.vision_encoder.vit_2d import PretrainedSliceGridEncoder
     import yaml
 
-    config_path="/root/TracGPT-R3D/config/vit_llama_3B.yaml"
+    config_path="/root/repo/TracGPT-R3D/config/vit_llama_3B.yaml"
     # config_path = "/workspace/TracGPT-R3D/config/vit_llama_3B_80GB.yaml"
     with open(config_path, "r") as f:
         full_config = yaml.safe_load(f)
@@ -275,48 +249,6 @@ if __name__ == "__main__":
         pin_memory=True,
     )
 
-    answer_set=set()
-
-    # file_path="debug_dump.txt"
-    # if os.path.exists(file_path):
-    #     os.remove(file_path)
-    #     print(f"{file_path} deleted.")
-    # else:
-    #     print(f"{file_path} does not exist.")
-    # print("projector", model.mm_projector)
-    # for i,batch in enumerate(train_loader):
-    #     with torch.no_grad():
-    #         print("train loader mode")
-    #         input_ids = batch["input_ids"].to(device)
-    #         attention_mask = batch["attention_mask"].to(device)
-    #         labels = batch["labels"].to(device)
-    #         images = batch["images"].to(device)
-    #         text = batch["full_texts"]
-    #         answer = batch["class_labels"]
-    #         print("full text",text)
-    #         non_neg_indices = torch.nonzero(labels != -100, as_tuple=False)
-    #         print("corresponding input_ids", input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]])
-    #         print("decoded corresponding input_ids", tokenizer.batch_decode(input_ids[non_neg_indices[:, 0], non_neg_indices[:, 1]], skip_special_tokens=False))
-    #         # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
-            
-    #         output=model(
-    #             input_ids=input_ids,
-    #             attention_mask=attention_mask,
-    #             labels=labels,
-    #             images=images
-    #         )
-    #         print("output", output)
-    #         generate_ids = model.generate(
-    #         input_ids=input_ids,
-    #         images=images,
-    #         attention_mask=attention_mask,
-    #         max_new_tokens=50,
-    #         pad_token_id=tokenizer.pad_token_id,)
-
-    #         output=tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-    #         print("output", output)
-    #         break
-           
     for i,batch in enumerate(train_loader):
         with torch.no_grad():
             print("train loader mode")
@@ -332,53 +264,57 @@ if __name__ == "__main__":
             decode_label = decode_labels(tokenizer, labels)
             print("decoded input_ids", decode_input)
             print("decoded labels", decode_label)
-            output=model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-                images=images,
-                aux_labels=aux_labels
+            # image_features = model.get_image_embeddings(images)
+            # output=model(
+            #     input_ids=input_ids,
+            #     attention_mask=attention_mask,
+            #     labels=labels,
+            #     # image_features=image_features,
+            #     images=images,
+            #     aux_labels=aux_labels
                 
-            )
-            print("output", output)
-            # print("output loss", output.loss)
-            gen_output=model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                images=images,
-                max_new_tokens=50,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id
-            )
-            gen_text=tokenizer.batch_decode(gen_output, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-            print("gen_text", gen_text)
+            # )
+            # # print("output", output)
+            # # logit=model.classify(image_features)
+            # # print("logit", logit)
+            # # print("output loss", output.loss)
+            # gen_output=model.generate(
+            #     input_ids=input_ids,
+            #     attention_mask=attention_mask,
+            #     images=images,
+            #     max_new_tokens=50,
+            #     pad_token_id=tokenizer.pad_token_id,
+            #     eos_token_id=tokenizer.eos_token_id
+            # )
+            # gen_text=tokenizer.batch_decode(gen_output, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+            # print("gen_text", gen_text)
             if i==4:
                 break
-    # for i,batch in enumerate(val_loader):
-    #     with torch.no_grad():
-    #         print("val loader mode")
-    #         input_ids = batch["input_ids"].to(device)
-    #         attention_mask = batch["attention_mask"].to(device)
-    #         labels = batch["labels"].to(device)
-    #         images = batch["images"].to(device)
-    #         text = batch["full_texts"]
-    #         answer = batch["class_labels"]
-    #         decode_input=tokenizer.batch_decode(input_ids, skip_special_tokens=False)
-    #         decode_label = decode_labels(tokenizer, labels)
-    #         print("decoded input_ids", decode_input)
-    #         print("decoded labels", decode_label)
-    #         # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
+    for i,batch in enumerate(val_loader):
+        with torch.no_grad():
+            print("val loader mode")
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+            images = batch["images"].to(device)
+            text = batch["full_texts"]
+            answer = batch["class_labels"]
+            decode_input=tokenizer.batch_decode(input_ids, skip_special_tokens=False)
+            decode_label = decode_labels(tokenizer, labels)
+            print("decoded input_ids", decode_input)
+            print("decoded labels", decode_label)
+            # print("input_ids", input_ids, "labels", labels, "attention_mask", attention_mask)
             
-    #         output=model(
-    #             input_ids=input_ids,
-    #             attention_mask=attention_mask,
-    #             labels=labels,
-    #             images=images
-    #         )
+            # output=model(
+            #     input_ids=input_ids,
+            #     attention_mask=attention_mask,
+            #     labels=labels,
+            #     images=images
+            # )
               
-    #         print("output loss", output.loss)
-    #         if i==4:
-    #             break
+            # print("output loss", output.loss)
+            if i==4:
+                break
     # for i,batch in enumerate(test_loader):  
     #     with torch.no_grad():
     #         print("test loader mode")

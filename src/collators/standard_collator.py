@@ -33,8 +33,8 @@ class StandardCollator:
         aux_labels,full_texts, class_labels, p_ids,question_texts = [],[], [], [],[]
 
         for sample in batch:
-            aux_label= sample.get("label_idx", -1)
-            aux_labels.append(aux_label)
+            # aux_label= sample.get("label_idx", -1)
+            # aux_labels.append(aux_label)
             image = sample["image"]
             images.append(image)
             p_ids.append(sample.get("P_ID", ""))
@@ -94,7 +94,7 @@ class StandardCollator:
             "class_labels": class_labels,
             "question_texts": question_texts,   
             "p_ids": p_ids,
-            "aux_labels": aux_labels
+            # "aux_labels": aux_labels
         }
         
 if __name__ == "__main__":
