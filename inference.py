@@ -71,7 +71,6 @@ def inference(model, tokenizer, dataloader, output_dir, num_beams=4, max_new_tok
                 preds.append(pred)
                 raw_preds.append(batch_preds[j])  
                 
-    # FIX: Save comprehensive results
     results = {
         "predictions": preds,
         "raw_predictions": raw_preds,
@@ -96,7 +95,8 @@ if __name__ == "__main__":
     from metric import calculate_metric
     import yaml
     import shutil   
-    config_path="config/vit_llama_3B.yaml"
+    # config_path="config/vit_llama_3B.yaml"
+    config_path="config/vit_llama_3B_cot_full.yaml"
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config=config["data"]
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     model_config = config["model"]
     # pretrain_path="output/r8qyf5em/checkpoint-678"
     # pretrain_path="output/626yvz3p/checkpoint-120"
-    pretrain_path="output/ocgq0zoy/checkpoint-640"
+    pretrain_path="output/vlxjrszc/checkpoint-3000"
     tag=pretrain_path.split("/")[1]
     tokenizer,model=load_model(model_config,pretrain_path,lora=True)
     print("eos_token_id",tokenizer.eos_token_id)
@@ -162,8 +162,8 @@ if __name__ == "__main__":
     test_metrics = inference(
         model, tokenizer, test_loader, test_eval_output_dir,
     )
-    with open(f"{test_eval_output_dir}/inference_results.json", "r") as f:
-        data=json.load(f)
-        preds = data["predictions"]
-        labels = data["references"]
-        calculate_metric(preds, labels)
+    # with open(f"{test_eval_output_dir}/inference_results.json", "r") as f:
+    #     data=json.load(f)
+    #     preds = data["predictions"]
+    #     labels = data["references"]
+    #     calculate_metric(preds, labels)

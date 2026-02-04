@@ -43,28 +43,33 @@ def load_data(
     train_paths, val_paths = train_test_split(
         train_data_paths, test_size=0.1, random_state=12
     )
+    train_mode="train"
+    val_mode="val"
+    test_mode="test"                
     if overfit_train:
         print("Overfitting on training set")
         test_data_paths = train_paths
         image_test_path = image_train_path
         val_paths = train_paths[:len(val_paths)]
+        # we set val mode =test to leave the answer empty string for generation
+        val_mode="test"
         
     train_set = dataset(
         data_paths=train_paths,
         image_path=image_train_path,
-        mode="train",
+        mode=train_mode ,
         n_sample=train_sample,
     )
     val_set = dataset(
         data_paths=val_paths,
         image_path=image_train_path,
-        mode="val",
+        mode=val_mode,
         n_sample=val_sample,
     )
     test_set = dataset(
         data_paths=test_data_paths,
         image_path=image_test_path,
-        mode="test",
+        mode=test_mode,
         n_sample=test_sample,
     )
     return train_set, val_set, test_set

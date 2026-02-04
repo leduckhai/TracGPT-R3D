@@ -24,4 +24,9 @@
 
 
 
-   pseudo_3d/32_all_slices/086cd8e5-5aea-4397-878f-b6d1c30cfeeb
+   pseudo_3d/32_all_slices/086cd8e5-5aea-4397-878f-b6d1c30cfeeb 
+
+
+
+
+   pseudo_3d/32_all_slices/edf3c478-aaff-43ec-8d51-7ef698ad1244/test/data

@@ -174,10 +174,10 @@ if __name__ == "__main__":
 
     from src.dataset.dataloader import load_data
     from src.collators.load_collator import load_collator
-    # from src.model.vision_encoder.vit_2d import PretrainedSliceGridEncoder
     import yaml
 
-    config_path="/root/repo/TracGPT-R3D/config/vit_llama_3B.yaml"
+    # config_path="/root/repo/TracGPT-R3D/config/vit_llama_3B.yaml"
+    config_path="/root/repo/TracGPT-R3D/config/vit_llama_3B_cot_lite.yaml"
     # config_path = "/workspace/TracGPT-R3D/config/vit_llama_3B_80GB.yaml"
     with open(config_path, "r") as f:
         full_config = yaml.safe_load(f)

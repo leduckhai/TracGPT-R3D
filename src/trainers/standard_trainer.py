@@ -48,7 +48,6 @@ class StandardTrainer(Trainer):
         tokenizer=self.tokenizer
         preds = []  
         refs = []
-        steps=[]
         with torch.no_grad(): 
             if not self.overfit:
                 for i, inputs in enumerate(tqdm(data_loader, desc="Evaluation")): 
@@ -77,7 +76,6 @@ class StandardTrainer(Trainer):
             else:
                 print("Overfitting evaluation mode")
                 for i, inputs in enumerate(tqdm(data_loader, desc="Inference")):      
-                    full_texts = inputs.get("full_texts", [])
                     class_labels = inputs.get("class_labels", [])
                     images=inputs.get("images", []).to(self.model.device)  
                     input_ids=inputs.get("input_ids", []).to(self.model.device)
@@ -105,7 +103,6 @@ class StandardTrainer(Trainer):
                     print("Labels:", class_labels)
                     for i,pred in enumerate(batch_preds):
                         print("Pred", pred)
-                        preds.append(pred)
                         
         if self.overfit:
             eval_loss=0.0

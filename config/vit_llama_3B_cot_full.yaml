@@ -3,15 +3,16 @@ data:
   dataset: "trac_cot"
   train_val_split: 0.9
 
-  train_val_dir: pseudo_3d/32_all_slices/0fa350fe-9eb2-4b61-916f-5a29e322f6ab/train/data
-  test_dir: pseudo_3d/32_all_slices/0fa350fe-9eb2-4b61-916f-5a29e322f6ab/test/data
+  train_val_dir: pseudo_3d/32_all_slices/edf3c478-aaff-43ec-8d51-7ef698ad1244/train/data
+  test_dir: pseudo_3d/32_all_slices/edf3c478-aaff-43ec-8d51-7ef698ad1244/test/data
 
   image_train_path: clean_data_s_chain/train/image
   image_test_path: clean_data_s_chain/test/image
-  overfit_train: False
-  train_sample: 5
-  val_sample: 5
-  test_sample: 5
+  # overfit_train: False
+  overfit_train: true
+  train_sample: -1
+  val_sample: 60
+  test_sample: -1
   dataloader_pin_memory: False
   # config:
   #   significant_slice_path: significant_slice.csv
@@ -21,8 +22,10 @@ general:
   collator: "standard"
 
   lora: True
-  lora_r: 8
-  lora_alpha: 16
+  # lora_r: 8
+  # lora_alpha: 16
+  lora_r: 32
+  lora_alpha: 64
   lora_dropout: 0.05
   lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj","gate_proj", "up_proj", "down_proj",        
         "lm_head",                                  
@@ -63,12 +66,12 @@ training:
   output_dir: "./output"
   per_device_train_batch_size: 4
   per_device_eval_batch_size: 4
-  max_steps: 5
+  max_steps: 3000
   logging_dir: "./logs"  
   eval_strategy: "steps"
-  eval_steps: 3
-  logging_steps: 3
-  save_steps: 3
+  eval_steps: 100
+  logging_steps: 50
+  save_steps: 100
   save_strategy: "steps"
   learning_rate: 1e-4
   weight_decay: 0.01

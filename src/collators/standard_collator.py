@@ -31,17 +31,19 @@ class StandardCollator:
     def __call__(self, batch):
         images, batch_input_ids, batch_attention_masks, batch_labels = [], [], [], []
         aux_labels,full_texts, class_labels, p_ids,question_texts = [],[], [], [],[]
-
+        ground_truths=[]
         for sample in batch:
             # aux_label= sample.get("label_idx", -1)
             # aux_labels.append(aux_label)
             image = sample["image"]
             images.append(image)
             p_ids.append(sample.get("P_ID", ""))
+            ground_truth=sample["ground_truth"]
             question=sample["question"]
             answer = sample["answer"].strip()
             status = sample["A4"]
             class_labels.append(status)
+            ground_truths.append(ground_truth)
             question_text = f"|Question|: {question}  {self.image_token}  "
             question_texts.append(question)
             full_text=question_text + self.answer_word_text 
@@ -94,6 +96,7 @@ class StandardCollator:
             "class_labels": class_labels,
             "question_texts": question_texts,   
             "p_ids": p_ids,
+            "ground_truths": ground_truths,
             # "aux_labels": aux_labels
         }
         

@@ -19,3 +19,21 @@ full slice:  pseudo_3d/-1_all_slices/8ddb8c04-4d8c-45fe-8a3d-da66309c3d1a
 
 version has significant slice 
 full:pseudo_3d/-1_all_slices/18eb3e36-0b00-43e8-b2ac-659ac19a94f6/test/data
+
+
+Jan 15 2026
+train cot data 
+output ./output/pbn0y4zc
+
+
+Jan 18 2026
+train cot data 
+output ./output/vlxjrszc
+
+
+
+contain singificant slice
+pseudo_3d/32_all_slices/edf3c478-aaff-43ec-8d51-7ef698ad1244/test/data
+
+error OSA1_0010
+0SA1_0052
