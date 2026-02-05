@@ -11,7 +11,7 @@ from PIL import Image
 import nibabel as nib
 from util import sort_files, group_and_merge_3d_bboxes_v2, group_files
 import logging
-# Configure logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

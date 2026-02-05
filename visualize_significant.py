@@ -8,6 +8,9 @@ import cv2
 import pickle
 import random
 from collections import defaultdict
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def visualize_grid(single_slice_data_folder,data_paths, base_image_path, save_dir,  scale_factor=1.5, dpi=400,
                    cell_h=496, cell_w=256, label_px=24):
@@ -40,8 +43,15 @@ def visualize_grid(single_slice_data_folder,data_paths, base_image_path, save_di
         for dp in data:
             if p_id not in slice_details:
                 slice_details[p_id]={}
-            slice_name=dp["Slide"]
+            slice_name=dp["Slide"]  
             slice_details[p_id][slice_name]=dp
+    # print("slice detail",slice_de)
+    for k,v in slice_details.items():
+        print(f"Patient {k} has {len(v)} slice details")
+        keys=list(v.keys())
+        keys.sort()
+        # for sk,sv in v.items():
+        #     print(f"  Slice {sk}: A2={sv.get('A2','')}, A3={sv.get('A3','')}, A4={sv.get('A4','')}")
     
     significant_slice_path = "significant_slice.csv"
     df = pd.read_csv(significant_slice_path)
@@ -83,7 +93,9 @@ def visualize_grid(single_slice_data_folder,data_paths, base_image_path, save_di
             "A4": data_point.get("A4", ""),
             "sample_significant_slice_file_name": None,
             "image_grid_file_name": image_save_path_grid,
-            "3d_image":f"grid_{i}.png"
+            "3d_image":f"grid_{i}.png",
+            "chain_of_thought_slice_index":""
+            "chain_of_thought_slice_name"
         }
 
         # Prepare significant slice indexes
@@ -100,12 +112,23 @@ def visualize_grid(single_slice_data_folder,data_paths, base_image_path, save_di
                 if s in slice_idx_map
             ]
             if match_slice_tuple:
+                # print("pid", p_id, "match slices:", match_slice_tuple)
                 match_slice_indexes = [t[2] for t in match_slice_tuple]
                 cot_sample["represent_slices"]= match_slice_indexes
-                cot_sample["bounding_boxes"] = {t[0]: t[1] for t in match_slice_tuple}
-                cot_sample["slice_wise_reason"] = {t[0]: slice_details[p_id][t[0]].get("A2", "") for t in match_slice_tuple}
-                cot_sample["slice_wise_rating"]={t[0]: slice_details[p_id][t[0]].get("A3", "") for t in match_slice_tuple}
+                cot_sample["bounding_boxes"] = {t[2]: t[1] for t in match_slice_tuple}
+                cot_sample["slice_wise_reason"] = {t[2]: slice_details[p_id][t[0]].get("A2", "") for t in match_slice_tuple}
+                cot_sample["slice_wise_rating"]={t[2]: get_visualize_rating( slice_details[p_id][t[0]].get("A3", "")) for t in match_slice_tuple}
+                cot_sample["scan_wise_reason"]= get_scan_wise_visual_rating( [slice_details[p_id][t[0]].get("A3", "") for t in match_slice_tuple])
+                cot_sample["scan_wise_diagnosis"]= get_final_diagnosis_mapping( [slice_details[p_id][t[0]].get("A4", "") for t in match_slice_tuple])
                 
+                
+                cot_sample["represent_slices_text"]= [t[0] for t in match_slice_tuple]
+                cot_sample["bounding_boxes_text"] = {t[0]: t[1] for t in match_slice_tuple}
+                cot_sample["slice_wise_reason_text"] = {t[0]: slice_details[p_id][t[0]].get("A2", "") for t in match_slice_tuple}
+                cot_sample["slice_wise_rating_text"]={t[0]: get_visualize_rating( slice_details[p_id][t[0]].get("A3", "")) for t in match_slice_tuple}
+                
+                sample["chain_of_thought_slice_index"]=prepare_cot_column(cot_sample)
+                sample["chain_of_thought_slice_name"]=prepare_cot_column_with_slice_info(cot_sample)
                 first_sig_name = match_slice_tuple[0][0]
                 significant_slice_path = os.path.join(base_image_path, p_id, f"{first_sig_name}.pkl")
                 with open(significant_slice_path, "rb") as f:
@@ -115,7 +138,7 @@ def visualize_grid(single_slice_data_folder,data_paths, base_image_path, save_di
                 sig_save_path = os.path.join(save_significant_slice_dir, p_id, f"{first_sig_name}.png")
                 sample["sample_significant_slice_file_name"] = sig_save_path
                 plt.imsave(sig_save_path, sig_image, cmap="gray", dpi=200)
-                
+                # remember to remove this
                 
         # Visualize and save
         slice_paths=[os.path.join(base_image_path, p_id, f"{s}.pkl") for s in slice_order]
@@ -160,19 +183,17 @@ def prepare_cot_column(sample):
 
 def prepare_cot_column_with_slice_info(sample):
     text="Q1: Representative slice selection \n"
-    text+=f"A1: {sample.get('represent_slices',[])}\n"
+    text+=f"A1: {sample.get('represent_slices_text',[])}\n"
     text+="Q2: Bounding box for representative slice \n"
-    text+=f"A2: {sample.get('bounding_boxes',[])}\n"
+    text+=f"A2: {sample.get('bounding_boxes_text',[])}\n"
     text+="Q3: Slice-wise reasoning\n"
-    text+=f"A3: {sample.get('slice_wise_reason',[])}\n"
+    text+=f"A3: {sample.get('slice_wise_reason_text',[])}\n"
     text+="Q4: Slice-wise visual rating\n"
-    text+=f"A4: {sample.get('slice_wise_rating',[])}\n"
-    text+="Q5: Slice-wise significant slice identification\n"
-    text+=f"A5: {sample.get('significant_slices',[])}\n"
-    text+=f"Q6: Scan-wise composite reasoning\n"
-    text+=f"A6: {sample.get('scan_wise_reason',[])}\n"
-    text+=f"Q7: Scan-wise final diagnosis\n"
-    text+=f"A7: {sample.get('scan_wise_diagnosis',[])}\n"
+    text+=f"A4: {sample.get('slice_wise_rating_text',[])}\n"
+    text+=f"Q5: Scan-wise composite reasoning\n"
+    text+=f"A5: {sample.get('scan_wise_reason',[])}\n"
+    text+=f"Q6: Scan-wise final diagnosis\n"
+    text+=f"A6: {sample.get('scan_wise_diagnosis',[])}\n"
     return text
     
 def rgb_to_grayscale(img_rgb):
@@ -193,7 +214,7 @@ def save_image_3d(image_paths, save_path):
     np.save(save_path, img_3d)
     print(f"Saved 3D data to {save_path}")
 
-def merge_visualize_rating_data(s: str) -> str:
+def get_visualize_rating(s: str) -> str:
     """Merge A3 scoring data."""
     result = {"GCA": 0, "Koedam": 0, "MTA": 0}
     if s:
@@ -206,7 +227,29 @@ def merge_visualize_rating_data(s: str) -> str:
             print.error(f"Error merge_visualize_rating_data {s}: {e}")
     return ""
 
-def merge_scan_wise_visual_rating(ls:list):
+def get_final_diagnosis_mapping(ls:list):  
+        degree_levels={
+                "non": "Non-Dementia",
+                "mild": "Mild-Dementia",
+                "moderate": "Moderate-Dementia"
+            }
+
+        if not ls:
+            logger.warning("Empty A4 list, defaulting to Non-Dementia")
+            return "Non-Dementia"
+
+        cleaned_list = [str(s) for s in ls if s is not None]
+        for level,description in reversed(degree_levels.items()):
+        
+            for s in cleaned_list:
+                if level.lower() in s.lower():
+                    logger.info(f"match s {s} for {level}")
+                    return description
+
+        logger.warning(f"No dementia level found in A4, defaulting to Non-Dementia: {cleaned_list}")
+        return "Non-Dementia"
+
+def get_scan_wise_visual_rating(ls:list):
     result={"GCA":0,"Koedam":0,"MTA":0}
     if len(ls)>0:
         for s in ls:
@@ -217,6 +260,7 @@ def merge_scan_wise_visual_rating(ls:list):
             except Exception as e:
                 print.error(f"Error merge_scan_wise_visual_rating {s}: {e}")
         return ", ".join([f"{k}={v}" for k, v in result.items()])
+    print("Empty list for scan wise visual rating")
     return ""
 
 def scale_to_cell(image, cell_h, cell_w, keep_aspect=True):
@@ -355,14 +399,16 @@ if __name__ == "__main__":
     test_path= data_path + "/test/data/"
     train_image_path="clean_data_s_chain/train/image"
     test_image_path="clean_data_s_chain/test/image"
+    train_slice_dir="clean_data_s_chain/train/data"
     # train_image_path="clean_data_s_chain/train/image_with_bboxes"
     # test_image_path="clean_data_s_chain/test/image_with_bboxes"
     significant_slice_path="significant_slice.csv"
     # visualize_and_save(train_path,train_image_path,significant_slice_path,mode="train")
-    all_train_files = [os.path.join(train_path,f)  for f in os.listdir(train_path) if f.endswith('.json')]
+    # all_train_files = [os.path.join(train_path,f)  for f in os.listdir(train_path) if f.endswith('.json')]
     # all_test_files = [os.path.join(test_path,f)  for f in os.listdir(test_path) if f.endswith('.json')]
-    # all_train_files = ["pseudo_3d/32_all_slices/edf3c478-aaff-43ec-8d51-7ef698ad1244/train/data/OAS1_0002.json"]
-    visualize_grid(all_train_files,
+    all_train_files = ["pseudo_3d/32_all_slices/edf3c478-aaff-43ec-8d51-7ef698ad1244/train/data/OAS1_0002.json"]
+    visualize_grid(train_slice_dir,
+                    all_train_files,
                    train_image_path,
                    save_dir="../viz_data/train",
     )
